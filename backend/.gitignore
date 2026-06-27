@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Environment / secrets
+.env
+
+# Local database
+*.db
+*.sqlite3
+
+# Playwright session state
+storage_state.json
+.playwright/

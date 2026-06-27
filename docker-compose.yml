@@ -1,0 +1,38 @@
+# AI Job Hunter — one-command local run (M11).
+#
+#   cp backend/.env.example backend/.env   # then fill in secrets
+#   docker compose up -d
+#   open http://localhost:5173             # dashboard (UI → /api proxied to app)
+#
+# The `app` service runs the FastAPI API *and* the daily APScheduler in one process
+# (ENABLE_SCHEDULER=true). The SQLite DB and Playwright storage_state live on named
+# volumes so they survive container rebuilds.
+
+services:
+  app:
+    build: ./backend
+    env_file:
+      - ./backend/.env
+    environment:
+      # Container-specific overrides (take precedence over .env).
+      DB_URL: sqlite:////data/job_hunter.db
+      STORAGE_STATE_DIR: /state
+      ENABLE_SCHEDULER: "true"
+    volumes:
+      - db_data:/data # SQLite database file
+      - pw_state:/state # Playwright storage_state (login sessions)
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      - app
+    ports:
+      - "5173:80"
+    restart: unless-stopped
+
+volumes:
+  db_data:
+  pw_state:

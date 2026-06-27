@@ -1,0 +1,8 @@
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Secrets (each module reads from backend/.env)
+.env
