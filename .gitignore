@@ -6,3 +6,8 @@
 
 # Secrets (each module reads from backend/.env)
 .env
+.env.*
+!.env.example
+
+# Local tool state
+.heapcode/

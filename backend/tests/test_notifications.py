@@ -39,7 +39,7 @@ def test_format_matches_message_has_summary_rank_company_title_score_link():
     matches = build_sample_matches()  # scores 92, 81
     text = format_matches_message(matches, top_n=10)
 
-    assert "2 new high-quality matches found" in text
+    assert "2 high-quality matches found" in text
     assert "1. <b>Acme</b> — Senior Backend Engineer" in text
     assert "2. <b>Globex</b> — Platform Engineer" in text
     assert "Score 92" in text
@@ -48,10 +48,10 @@ def test_format_matches_message_has_summary_rank_company_title_score_link():
 
 def test_format_matches_message_singular_and_empty():
     one = format_matches_message(build_sample_matches()[:1], top_n=10)
-    assert "1 new high-quality match found" in one  # singular
+    assert "1 high-quality match found" in one  # singular
 
     empty = format_matches_message([], top_n=10)
-    assert "0 new high-quality matches found" in empty
+    assert "0 high-quality matches found" in empty
     assert "Nothing crossed the bar" in empty
 
 
@@ -59,7 +59,7 @@ def test_format_matches_message_respects_top_n():
     text = format_matches_message(build_sample_matches(), top_n=1)
     assert "1. <b>Acme</b>" in text
     assert "2. <b>Globex</b>" not in text  # capped
-    assert "2 new high-quality matches found" in text  # summary still counts all
+    assert "2 high-quality matches found" in text  # summary still counts all
 
 
 def test_format_failure_message():
@@ -84,6 +84,7 @@ def _seed_run_with_matches(session, scores: list[int]) -> int:
             source="naukri",
             url=f"https://x/{i}",
             content_hash=f"h{i}",
+            run_id=run_id,
         )
         repo.save_match(session, job_id=job.id, run_id=run_id, score=score, llm_model="m")
     return run_id

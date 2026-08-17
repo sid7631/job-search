@@ -15,6 +15,10 @@ from app.profiles.resume_parser import ResumeParseError, parse_resume
 
 router = APIRouter(prefix="/api", tags=["profile"])
 
+# Resumes are a few hundred KB; the cap stops an oversized upload being read whole
+# into memory. The API has no auth, so it must not be trivially OOM-able.
+MAX_RESUME_BYTES = 10 * 1024 * 1024
+
 
 @router.get("/profile", response_model=ProfileOut | None)
 def get_profile(session: SessionDep) -> ProfileOut | None:
@@ -31,7 +35,17 @@ def upload_resume(session: SessionDep, file: Annotated[UploadFile, File()]) -> P
         raise HTTPException(status_code=415, detail="Upload a .pdf or .docx file.")
 
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        tmp.write(file.file.read())
+        written = 0
+        while chunk := file.file.read(1024 * 1024):
+            written += len(chunk)
+            if written > MAX_RESUME_BYTES:
+                tmp.close()
+                os.unlink(tmp.name)
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"Résumé is larger than {MAX_RESUME_BYTES // (1024 * 1024)} MB.",
+                )
+            tmp.write(chunk)
         path = tmp.name
     try:
         profile = parse_resume(session, path)

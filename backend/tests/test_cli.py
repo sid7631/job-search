@@ -16,6 +16,9 @@ def test_parser_exposes_entrypoints():
         "run-pipeline",
         "serve-api",
         "start-scheduler",
+        "install-schedule",
+        "catch-up",
+        "login",
     }
 
 

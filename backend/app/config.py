@@ -22,14 +22,22 @@ class Settings(BaseSettings):
     )
 
     # --- LLM (ranking + resume parsing) ---
-    gemini_api_key: str = ""
-    llm_model: str = "gemini-1.5-flash"
+    # See `app.llm_client.PROVIDERS` for the full list: openai, anthropic, ollama,
+    # ollama_cloud, groq, deepseek, mistral, openrouter, together, xai, lmstudio,
+    # openai_compatible. Blank base_url/model fall back to the provider's defaults.
+    llm_provider: str = "ollama"
+    llm_base_url: str = ""
+    llm_api_key: str = ""
+    llm_model: str = ""
 
     # --- Telegram notifier ---
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     telegram_top_n: int = 10
     telegram_min_score: int = 0
+    # Push only jobs first seen in this run, so a job you have not acted on is not
+    # re-sent every night. Failures and the daily summary are unaffected.
+    telegram_only_new: bool = True
 
     # --- Naukri collector ---
     naukri_email: str = ""
@@ -37,6 +45,10 @@ class Settings(BaseSettings):
     naukri_keywords: str = ""
     naukri_location: str = ""
     naukri_experience: str = ""
+    # Naukri's public results page has everything we need, including per-job URLs.
+    # Logging in switches to the "TopTier" UI (no per-card URL) and invites an
+    # OTP/captcha challenge, so it is off by default.
+    naukri_require_login: bool = False
 
     # --- LinkedIn collector ---
     # Scraping LinkedIn is fragile and against their ToS — see the README. The
@@ -48,6 +60,10 @@ class Settings(BaseSettings):
     linkedin_location: str = ""
     linkedin_max_pages: int = 3
     linkedin_delay_multiplier: float = 1.75
+    # LinkedIn answers an automated login by pushing an "is this you?" prompt to the
+    # phone. Approving it takes a human a moment, so the pipeline waits rather than
+    # giving up — set to 0 to fail fast instead of holding the run open.
+    linkedin_approval_wait_seconds: int = 180
 
     # --- Collector behaviour (shared) ---
     collector_max_pages: int = 5
@@ -63,6 +79,22 @@ class Settings(BaseSettings):
 
     # --- LLM ranking ---
     ranking_max_concurrency: int = 4
+
+    # --- Pre-filter (cheap, deterministic; runs before any LLM call) ---
+    # Cap on jobs sent to the LLM per run. 0 disables the cap (rank everything).
+    prefilter_max_jobs: int = 50
+    # Drop jobs scoring below this (0-100). 0 keeps everything the cap allows.
+    prefilter_min_score: float = 0.0
+
+    # --- Detail enrichment (fetch the real posting before ranking) ---
+    enrich_enabled: bool = True
+    # Cap on detail pages opened per run — each is a real page load with a delay.
+    enrich_max_jobs: int = 30
+
+    # --- Feedback loop ---
+    # Feed recent tracked decisions into the ranking prompt so it learns your taste.
+    feedback_enabled: bool = True
+    feedback_max_examples: int = 8
 
     # --- API ---
     # Comma-separated list of allowed CORS origins (the React dev server).

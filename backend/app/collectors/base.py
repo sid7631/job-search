@@ -15,6 +15,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from sqlalchemy.orm import Session
 
@@ -100,6 +101,45 @@ def retry_with_backoff[T](
     raise last_exc
 
 
+def storage_state_path(settings, source: str) -> Path:
+    """Where a source's persisted browser session (cookies + localStorage) lives."""
+    return Path(settings.storage_state_dir).expanduser() / f"{source}.json"
+
+
+def load_storage_state(settings, source: str) -> str | None:
+    """Return the saved session file for Playwright, or None if there isn't one.
+
+    Reusing a session is what keeps LinkedIn calm: a brand-new cookie-less browser
+    logging in every single night looks like a new device each time, which is
+    precisely what triggers their security checkpoint.
+    """
+    path = storage_state_path(settings, source)
+    if path.is_file() and path.stat().st_size > 0:
+        return str(path)
+    return None
+
+
+def save_storage_state(context, settings, source: str) -> None:
+    """Persist the browser session so the next run can skip the credential login."""
+    path = storage_state_path(settings, source)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        context.storage_state(path=str(path))
+        logger.info("%s: saved browser session to %s", source, path)
+    except Exception:
+        # A session we failed to save just means a fresh login next run.
+        logger.exception("%s: could not save browser session", source)
+
+
+def clear_storage_state(settings, source: str) -> None:
+    """Delete a saved session (used when it is rejected as dead)."""
+    path = storage_state_path(settings, source)
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        logger.warning("%s: could not remove stale session %s", source, path)
+
+
 def payload_to_dict(payload: RawJobPayload) -> dict:
     """Serialize a scraped payload into the `raw_jobs.raw_payload_json` shape.
 
@@ -141,10 +181,12 @@ def persist_raw_jobs(
     return saved
 
 
-def record_collector_error(session_scope: SessionScope, run_id: int, message: str) -> None:
-    """Append a collector error to the run without marking it finished."""
+def record_collector_error(
+    session_scope: SessionScope, run_id: int, message: str, *, source: str | None = None
+) -> None:
+    """Record a collector failure against its source, leaving the run's own status alone."""
     with session_scope() as session:
-        repo.record_run_error(session, run_id, message)
+        repo.record_run_error(session, run_id, message, source=source)
 
 
 def safe_collect(collector: Collector, run_id: int) -> list[RawJob]:

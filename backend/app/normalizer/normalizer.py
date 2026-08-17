@@ -260,6 +260,7 @@ def normalize_and_dedupe(
                 source=nj.source,
                 url=nj.url,
                 content_hash=nj.content_hash,
+                run_id=run_id,
             )
             report.inserted += 1
             seen_ids.append(job.id)

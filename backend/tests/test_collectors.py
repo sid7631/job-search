@@ -82,15 +82,38 @@ def test_bad_session_records_error_and_returns_empty(scope):
     assert saved == []
     with scope() as s:
         run = s.get(Run, run_id)
-        assert run.error_text is not None
-        assert "login failed" in run.error_text
+        assert run.source_errors_json
+        assert "login failed" in str(run.source_errors_json)
         assert repo.get_raw_jobs_for_run(s, run_id) == []
 
 
-def test_missing_credentials_is_a_session_error():
-    collector = NaukriCollector(settings=Settings(naukri_email="", naukri_password=""))
-    with pytest.raises(SessionError):
-        collector._fetch_raw_jobs()
+class _LoginWallPage:
+    """Minimal page stand-in that always looks like Naukri's login wall."""
+
+    url = "https://www.naukri.com/nlogin/login"
+
+    def goto(self, *a, **k): ...
+    def wait_for_timeout(self, *a, **k): ...
+    def query_selector(self, *a, **k):
+        return None
+
+
+def test_missing_credentials_is_a_session_error_only_when_login_required(tmp_path):
+    settings = Settings(
+        naukri_email="",
+        naukri_password="",
+        naukri_require_login=True,
+        storage_state_dir=str(tmp_path),
+    )
+    collector = NaukriCollector(settings=settings)
+    with pytest.raises(SessionError, match="NAUKRI_REQUIRE_LOGIN"):
+        collector._ensure_session(None, _LoginWallPage())
+
+
+def test_public_scrape_needs_no_credentials(tmp_path):
+    # The default path: no login required, so _ensure_session is a no-op.
+    settings = Settings(naukri_email="", naukri_password="", storage_state_dir=str(tmp_path))
+    NaukriCollector(settings=settings)._ensure_session(None, None)
 
 
 def test_safe_collect_isolates_unexpected_crash():

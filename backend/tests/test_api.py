@@ -57,7 +57,7 @@ def _seed(factory) -> dict:
                 job_id=job.id,
                 run_id=run_id,
                 score=score,
-                llm_model="gemini-test",
+                llm_model="fake-model",
                 pros=["good"],
                 cons=["bad"],
                 reason="because",
@@ -213,14 +213,71 @@ def test_settings_get_and_update(api):
 
     updated = client.put(
         "/api/settings",
-        json={"naukri_keywords": "data engineer", "naukri_location": "pune", "telegram_top_n": 5},
+        json={
+            "naukri_keywords": "data engineer",
+            "naukri_location": "pune",
+            "telegram_top_n": 5,
+            "llm_provider": "ollama",
+            "llm_model": "llama3.2",
+            "llm_base_url": "http://localhost:11434/v1",
+        },
     ).json()
     assert updated["naukri_keywords"] == "data engineer"
     assert updated["naukri_location"] == "pune"
     assert updated["telegram_top_n"] == 5
+    assert updated["llm_provider"] == "ollama"
+    assert updated["llm_model"] == "llama3.2"
+    assert updated["llm_base_url"] == "http://localhost:11434/v1"
 
     # Persisted across requests.
     assert client.get("/api/settings").json()["naukri_keywords"] == "data engineer"
+
+
+def test_settings_rejects_unknown_llm_provider(api):
+    client, _, _ = api
+    resp = client.put("/api/settings", json={"llm_provider": "gemini"})
+    assert resp.status_code == 422
+
+
+def test_llm_providers_endpoint(api):
+    client, _, _ = api
+    providers = client.get("/api/settings/llm/providers").json()
+    keys = {p["key"] for p in providers}
+    assert {"openai", "anthropic", "ollama", "ollama_cloud"} <= keys
+    assert "gemini" not in keys
+    local = next(p for p in providers if p["key"] == "ollama")
+    assert local["requires_key"] is False
+    assert local["default_base_url"] == "http://localhost:11434/v1"
+
+
+def test_llm_test_endpoint_reports_failure_without_raising(api):
+    client, _, _ = api
+    # A provider that needs a key but has none: fails config validation offline,
+    # so the endpoint must report ok=False in the body rather than 500.
+    client.put("/api/settings", json={"llm_provider": "openai", "llm_model": "gpt-4o-mini"})
+    body = client.post("/api/settings/llm/test", json={}).json()
+    assert body["ok"] is False
+    assert "API key is required" in body["detail"]
+
+
+def test_llm_test_uses_unsaved_body_values_and_saves_nothing(api):
+    client, _, _ = api
+    client.put("/api/settings", json={"llm_provider": "openai", "llm_model": "gpt-4o-mini"})
+
+    # An unsaved provider in the body is what gets tested: `openai_compatible` with
+    # no base URL fails config validation offline, unlike the saved `openai`.
+    body = client.post(
+        "/api/settings/llm/test",
+        json={"llm_provider": "openai_compatible", "llm_model": "m", "llm_api_key": "typed"},
+    ).json()
+    assert body["ok"] is False
+    assert body["provider"] == "openai_compatible"
+    assert "base URL is required" in body["detail"]
+
+    # Nothing was persisted by the test call.
+    saved = client.get("/api/settings").json()
+    assert saved["llm_provider"] == "openai"
+    assert saved["llm_api_key_set"] is False
 
 
 # --------------------------------------------------------------------- docs

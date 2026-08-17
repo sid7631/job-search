@@ -45,15 +45,16 @@ class CountingLLM:
     def __init__(self):
         self.calls = 0
 
-    def __call__(self, prompt, *, model, api_key):
+    def __call__(self, prompt: str) -> dict:
         self.calls += 1
         return {"score": 85, "pros": ["fit"], "cons": [], "reason": "good"}
 
 
 def _settings(**kw) -> Settings:
     base = dict(
-        llm_model="gemini-test",
-        gemini_api_key="k",
+        llm_provider="openai",
+        llm_model="fake-model",
+        llm_api_key="k",
         ranking_max_concurrency=2,
         dedupe_fuzzy_threshold=90.0,
     )
@@ -233,8 +234,9 @@ def test_background_scheduler_starts_and_registers_job():
     scheduler = start_background_scheduler(_settings(run_hour=7))
     try:
         assert scheduler.running
-        job = scheduler.get_jobs()[0]
-        assert job.id == JOB_ID
+        # A one-shot catch-up job is registered alongside the daily cron job.
+        job = scheduler.get_job(JOB_ID)
+        assert job is not None
         assert "hour='7'" in str(job.trigger)
     finally:
         scheduler.shutdown(wait=False)

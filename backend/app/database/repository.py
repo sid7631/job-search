@@ -115,11 +115,18 @@ def upsert_job(
     description: str | None = None,
     skills: Sequence[str] | None = None,
     url: str | None = None,
+    run_id: int | None = None,
 ) -> Job:
-    """Insert a job, or update the existing one with the same `content_hash`."""
+    """Insert a job, or update the existing one with the same `content_hash`.
+
+    Never touches `detail_text` / `detail_fetched_at`: the nightly re-scrape rewrites
+    the thin card `description`, and enrichment must survive that.
+    """
     job = session.scalar(select(Job).where(Job.content_hash == content_hash))
     if job is None:
         job = Job(content_hash=content_hash)
+        # Set once, on first sight, so "new today" stays true on later re-scrapes.
+        job.first_seen_run_id = run_id
         session.add(job)
     job.title = title
     job.company = company
@@ -128,6 +135,27 @@ def upsert_job(
     job.description = description
     job.skills_json = list(skills or [])
     job.url = url
+    session.flush()
+    return job
+
+
+def set_job_detail(
+    session: Session,
+    job_id: int,
+    *,
+    detail_text: str | None,
+) -> Job | None:
+    """Store a fetched detail-page description and stamp the attempt.
+
+    The stamp is written even when `detail_text` is None so a posting whose page
+    cannot be read (expired, gated) is not re-fetched on every subsequent run.
+    """
+    job = session.get(Job, job_id)
+    if job is None:
+        return None
+    if detail_text:
+        job.detail_text = detail_text
+    job.detail_fetched_at = _utcnow()
     session.flush()
     return job
 
@@ -369,16 +397,25 @@ def finish_run(
     return run
 
 
-def record_run_error(session: Session, run_id: int, error_text: str) -> Run:
-    """Append an error message to a run without marking it finished.
+def record_run_error(
+    session: Session, run_id: int, error_text: str, *, source: str | None = None
+) -> Run:
+    """Record a problem on a run without marking it finished.
 
-    Used by collectors so a single source failure is recorded but the run can
-    continue with other sources.
+    With `source`, this is an isolated per-source failure: it lands in
+    `source_errors_json` and leaves `error_text` alone, so one dead scraper never
+    makes an otherwise successful run look failed. Without it, the message is
+    appended to `error_text` as before.
     """
     run = session.get(Run, run_id)
     if run is None:
         raise ValueError(f"run {run_id} not found")
-    run.error_text = f"{run.error_text}\n{error_text}" if run.error_text else error_text
+    if source:
+        errors = dict(run.source_errors_json or {})
+        errors[source] = error_text
+        run.source_errors_json = errors
+    else:
+        run.error_text = f"{run.error_text}\n{error_text}" if run.error_text else error_text
     session.flush()
     return run
 

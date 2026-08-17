@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from app.database.models import (
     Application,
@@ -19,6 +19,7 @@ from app.database.models import (
     JobMatch,
     Run,
 )
+from app.llm_client import PROVIDER_KEYS
 
 
 class MatchOut(BaseModel):
@@ -29,6 +30,8 @@ class MatchOut(BaseModel):
     company: str
     location: str | None
     url: str | None
+    #: Which job board this came from ("naukri", "linkedin"), shown as a tag.
+    source: str
     score: int
     pros: list[str]
     cons: list[str]
@@ -36,6 +39,8 @@ class MatchOut(BaseModel):
     llm_model: str | None
     run_id: int
     created_at: datetime
+    #: First seen in this run — lets the UI badge today's genuinely new roles.
+    is_new: bool
 
     @classmethod
     def from_match(cls, match: JobMatch) -> MatchOut:
@@ -46,6 +51,7 @@ class MatchOut(BaseModel):
             company=job.company,
             location=job.location,
             url=job.url,
+            source=job.source,
             score=match.score,
             pros=list(match.pros_json or []),
             cons=list(match.cons_json or []),
@@ -53,6 +59,7 @@ class MatchOut(BaseModel):
             llm_model=match.llm_model,
             run_id=match.run_id,
             created_at=match.created_at,
+            is_new=job.first_seen_run_id == match.run_id,
         )
 
 
@@ -64,7 +71,10 @@ class MatchDetailOut(BaseModel):
     company: str
     location: str | None
     url: str | None
+    source: str
     description: str | None
+    #: True when `description` is the real posting rather than the card summary.
+    description_enriched: bool
     skills: list[str]
     score: int | None
     pros: list[str]
@@ -82,7 +92,9 @@ class MatchDetailOut(BaseModel):
             company=job.company,
             location=job.location,
             url=job.url,
-            description=job.description,
+            source=job.source,
+            description=job.effective_description,
+            description_enriched=bool(job.detail_text),
             skills=list(job.skills_json or []),
             score=match.score if match else None,
             pros=list(match.pros_json or []) if match else [],
@@ -157,7 +169,11 @@ class RunOut(BaseModel):
     finished_at: datetime | None
     status: str
     source_counts: dict
+    #: Fatal error. Present only on a FAILED run.
     error_text: str | None
+    #: {source: message} for sources that were skipped. The run can still be a
+    #: SUCCESS — the UI shows these as warnings, not failures.
+    source_errors: dict[str, str]
 
     @classmethod
     def from_run(cls, run: Run) -> RunOut:
@@ -168,6 +184,7 @@ class RunOut(BaseModel):
             status=run.status,
             source_counts=run.source_counts_json or {},
             error_text=run.error_text,
+            source_errors=run.source_errors_json or {},
         )
 
 
@@ -192,10 +209,57 @@ class SettingsOut(BaseModel):
     linkedin_location: str
     telegram_min_score: int
     telegram_top_n: int
+    llm_provider: str
+    llm_base_url: str
+    llm_model: str
+    llm_api_key_set: bool
+    # The base URL / model actually used when the fields above are blank.
+    llm_effective_base_url: str
+    llm_effective_model: str
+    llm_requires_key: bool
+    #: Search terms the parsed résumé implies, keyed by setting name. The UI shows
+    #: these as placeholders so it is obvious which fields are auto-filled.
+    derived_from_resume: dict[str, str]
+    #: Fields currently coming from the résumé rather than an explicit value.
+    auto_fields: list[str]
+
+
+class LLMProviderOut(BaseModel):
+    """One selectable provider, with the defaults the UI shows as placeholders."""
+
+    key: str
+    label: str
+    default_base_url: str
+    default_model: str
+    requires_key: bool
+    docs_url: str
+
+
+class LLMTestIn(BaseModel):
+    """Unsaved provider values to test.
+
+    Anything omitted or blank falls back to the saved setting, so the UI can test
+    exactly what is on screen — including a key typed but not yet saved — without
+    the test writing anything to the database.
+    """
+
+    llm_provider: str | None = None
+    llm_base_url: str | None = None
+    llm_model: str | None = None
+    llm_api_key: str | None = None
+
+
+class LLMTestOut(BaseModel):
+    """Result of a live round-trip against the configured provider."""
+
+    ok: bool
+    provider: str
+    model: str
+    detail: str | None = None
 
 
 class SettingsUpdate(BaseModel):
-    """Settings-page edits. Only provided fields change; blank password = unchanged."""
+    """Settings-page edits. Only provided fields change; blank password/api_key = unchanged."""
 
     naukri_email: str | None = None
     naukri_password: str | None = None
@@ -208,6 +272,23 @@ class SettingsUpdate(BaseModel):
     linkedin_location: str | None = None
     telegram_min_score: int | None = None
     telegram_top_n: int | None = None
+    llm_provider: str | None = None
+    llm_base_url: str | None = None
+    llm_model: str | None = None
+    llm_api_key: str | None = None
+
+    @field_validator("llm_provider")
+    @classmethod
+    def _known_provider(cls, value: str | None) -> str | None:
+        """Reject unknown providers here rather than at the next pipeline run."""
+        if value is None or not value.strip():
+            return value
+        key = value.strip().lower()
+        if key not in PROVIDER_KEYS:
+            raise ValueError(
+                f"unknown provider '{value}'; choose one of: {', '.join(PROVIDER_KEYS)}"
+            )
+        return key
 
 
 class ProfileOut(BaseModel):

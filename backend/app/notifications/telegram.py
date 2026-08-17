@@ -44,13 +44,30 @@ def _apply_link(url: str | None) -> str:
     return f'<a href="{html.escape(url, quote=True)}">Apply</a>'
 
 
-def format_matches_message(matches: Sequence, *, top_n: int) -> str:
+def format_source_warning_message(run_id: int, sources: list[str]) -> str:
+    """Alert that one or more sources scraped nothing at all."""
+    names = ", ".join(html.escape(s) for s in sources)
+    return (
+        f"<b>⚠️ No jobs scraped from: {names}</b>\n\n"
+        f"Run <code>{run_id}</code> finished, but those sources returned zero cards. "
+        "That usually means the site changed its markup or the login was challenged — "
+        "check the Runs tab."
+    )
+
+
+def format_matches_message(matches: Sequence, *, top_n: int, only_new: bool = False) -> str:
     """Format the daily picks: a summary line plus rank/company/title/score/link."""
     count = len(matches)
     noun = "match" if count == 1 else "matches"
-    header = f"<b>🎯 {count} new high-quality {noun} found</b>"
+    label = "new " if only_new else ""
+    header = f"<b>🎯 {count} {label}high-quality {noun} found</b>"
     if count == 0:
-        return f"{header}\n\nNothing crossed the bar today."
+        quiet = (
+            "No new roles today — nothing has been posted since the last run."
+            if only_new
+            else "Nothing crossed the bar today."
+        )
+        return f"{header}\n\n{quiet}"
 
     lines = [header, ""]
     for rank, match in enumerate(matches[:top_n], start=1):
@@ -154,11 +171,30 @@ class TelegramNotifier:
         self._sender(text)
 
     def notify_success(self, run_id: int) -> None:
-        """Push the run's top matches."""
+        """Push the run's top matches, by default only the ones first seen today.
+
+        Without the new-only filter a job you have not acted on is re-sent every
+        night for as long as it stays on the search page, which trains you to ignore
+        the digest. `TELEGRAM_ONLY_NEW=false` restores the full top-N list.
+        """
         min_score = self._settings.telegram_min_score or None
         with self._session_scope() as session:
             matches = repo.get_today_matches(session, run_id=run_id, min_score=min_score)
-        self.send(format_matches_message(matches, top_n=self._settings.telegram_top_n))
+            if self._settings.telegram_only_new:
+                matches = [
+                    m for m in matches if m.job is not None and m.job.first_seen_run_id == run_id
+                ]
+        self.send(
+            format_matches_message(
+                matches,
+                top_n=self._settings.telegram_top_n,
+                only_new=self._settings.telegram_only_new,
+            )
+        )
+
+    def notify_source_warning(self, run_id: int, sources: list[str]) -> None:
+        """Alert that a source returned nothing — usually a broken scraper."""
+        self.send(format_source_warning_message(run_id, sources))
 
     def notify_failure(self, run_id: int, error: str) -> None:
         """Send a short failure alert."""

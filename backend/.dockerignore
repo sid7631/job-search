@@ -3,8 +3,16 @@ __pycache__
 *.pyc
 .pytest_cache
 .ruff_cache
-*.db
-*.sqlite3
-.env
-.playwright
 tests
+
+# Your data — never bake any of this into an image.
+# `.env` alone missed copies like `.env.bak`, and `*.db` misses dated snapshots
+# such as job_hunter.db.backup-20260817-005923.
+.env
+.env.*
+*.db
+*.db.backup-*
+*.sqlite3
+.playwright
+logs
+*.log

@@ -76,8 +76,8 @@ def test_dead_session_records_error_and_sends_reauth_alert(scope):
     assert alerts == [1]  # Telegram re-auth alert fired
     with scope() as s:
         run = s.get(Run, run_id)
-        assert run.error_text is not None
-        assert "checkpoint" in run.error_text
+        assert run.source_errors_json
+        assert "checkpoint" in str(run.source_errors_json)
         assert repo.get_raw_jobs_for_run(s, run_id) == []
 
 
@@ -91,7 +91,7 @@ def test_alert_failure_still_returns_gracefully(scope):
 
     assert collector.collect(run_id) == []  # alert failure does not crash the run
     with scope() as s:
-        assert "dead" in s.get(Run, run_id).error_text
+        assert "dead" in str(s.get(Run, run_id).source_errors_json)
 
 
 def test_missing_credentials_is_a_session_error():

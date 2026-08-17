@@ -1,7 +1,7 @@
 # AI Job Hunter — User Guide (run it natively on your Mac)
 
-Your personal AI recruiter: it logs into Naukri + LinkedIn, scrapes jobs matching your
-search, dedups them, scores each 0–100 against your résumé with Gemini, (optionally)
+Your personal AI recruiter: it scrapes jobs matching your search from Naukri and LinkedIn,
+dedups them, scores each 0–100 against your résumé with an LLM of your choice, (optionally)
 pushes the top picks to Telegram, and gives you a dashboard to triage and track.
 
 > **Why native, not Docker?** Naukri/LinkedIn block *headless* browsers, so scraping
@@ -26,6 +26,13 @@ cd backend && uv run python -m app.main run-pipeline
 
 # …or run it automatically every day at RUN_HOUR:
 cd backend && uv run python -m app.main start-scheduler
+
+# keep the scheduler alive across reboots (macOS LaunchAgent). This *writes* the
+# plist and prints a `launchctl load …` line — run that line to actually start it:
+cd backend && uv run python -m app.main install-schedule
+
+# if the Mac was asleep at RUN_HOUR, catch up now:
+cd backend && uv run python -m app.main catch-up
 ```
 
 Open **http://localhost:5173**. Done. From the dashboard you can **upload a résumé**
@@ -60,20 +67,28 @@ Everything lives in `backend/.env` (gitignored — never put secrets in `.env.ex
 The important keys:
 
 ```dotenv
-# --- Gemini (résumé parsing + job ranking) ---
-GEMINI_API_KEY=...                 # aistudio.google.com → Get API key
-LLM_MODEL=gemini-2.0-flash         # higher free rate limit than 3.5-flash
+# --- LLM (résumé parsing + job ranking) ---
+# Free + private: run Ollama locally (`brew install ollama; ollama pull llama3.2`).
+LLM_PROVIDER=ollama                # or ollama_cloud | openai | anthropic | groq |
+                                   # deepseek | mistral | openrouter | together | xai |
+                                   # lmstudio | openai_compatible
+LLM_API_KEY=                       # leave blank for local ollama / lmstudio
+LLM_MODEL=                         # blank = provider default (ollama -> llama3.2)
+LLM_BASE_URL=                      # blank = provider default; required for openai_compatible
 
 # --- Telegram (optional daily digest) ---
 TELEGRAM_BOT_TOKEN=...             # @BotFather → /newbot
 TELEGRAM_CHAT_ID=                  # YOUR numeric id (see §4) — not the bot name
 
 # --- Naukri ---
+# Default (NAUKRI_REQUIRE_LOGIN=false) uses the public results page and needs no login.
+# Set NAUKRI_REQUIRE_LOGIN=true to use the logged-in UI (no per-job URLs, more OTP/captcha risk).
 NAUKRI_EMAIL=you@example.com
 NAUKRI_PASSWORD=...
 NAUKRI_KEYWORDS=frontend developer, react js
 NAUKRI_LOCATION=bangalore
 NAUKRI_EXPERIENCE=10
+NAUKRI_REQUIRE_LOGIN=false
 
 # --- LinkedIn ---
 LINKEDIN_EMAIL=you@example.com
@@ -88,8 +103,9 @@ RUN_HOUR=8                         # daily scheduler time (Asia/Kolkata)
 
 > **Switching accounts / changing search:** easiest from the dashboard's **Settings**
 > page (keywords, location, experience, email, password — stored in your DB, overriding
-> `.env`, applied on the next run). Or edit `NAUKRI_*` / `LINKEDIN_*` in `.env`. The
-> collectors log in fresh every run, so the next run uses the new account.
+> `.env`, applied on the next run). Or edit `NAUKRI_*` / `LINKEDIN_*` in `.env`. Collectors
+> reuse a saved session when one exists; refresh it with
+> `uv run python -m app.main login --source naukri|linkedin` after a password change or checkpoint.
 
 ### Load your résumé (one-time, and whenever it changes)
 
@@ -129,8 +145,7 @@ To stop them later: `pkill -f "app.main serve-api"; pkill -f vite`
 
 **On demand — easiest is the dashboard:** click **Run** in the header (on any page), or
 **Run now** on the **Runs** tab. A Chrome window opens for Naukri, then one for LinkedIn;
-it logs in, scrapes, dedups, and ranks against your résumé in the background. CLI
-equivalent:
+it scrapes, dedups, and ranks against your résumé in the background. CLI equivalent:
 
 ```bash
 cd ~/Documents/github/job_search/backend
@@ -179,8 +194,8 @@ Once set, every successful run pushes the top picks; failed runs send an alert.
 
 - **Matches (home):** today's ranked jobs as cards — score badge (lime ≥85 / amber
   70–84 / grey below), title, company, location, top pros/cons. Filter by min score.
-  Click a card for the full reasoning. **Apply** opens the posting (LinkedIn jobs only —
-  Naukri's new UI exposes no link). **Track** adds it to your pipeline.
+  Click a card for the full reasoning. **Apply** opens the posting (LinkedIn always;
+  Naukri when `NAUKRI_REQUIRE_LOGIN=false`). **Track** adds it to your pipeline.
 - **Pipeline:** board by status (Saved → Applied → Interviewing → Offer / Rejected /
   Dropped). Change status from the dropdown, add notes, see when you applied.
 - **Runs:** history of runs (counts, status, errors) + the **Run now** button.
@@ -203,14 +218,33 @@ Once set, every successful run pushes the top picks; failed runs send an alert.
 - **Fragile scrapers.** Naukri/LinkedIn are parsed from the live page; a site redesign
   will break a collector. It fails *gracefully* (records the error, 0 jobs, no crash) —
   the fix is refreshing the selectors.
-- **Naukri = no Apply link / no full description** (new UI hides both; a summary is built
-  from the card). **LinkedIn = has Apply links.** Track + ranking work for both.
+- **Naukri default = public results page with per-job URLs**, which is what makes Apply
+  work and lets the enrich stage fetch full descriptions for the shortlist (the cards
+  themselves are only snippets, and enrich is capped at `ENRICH_MAX_JOBS`). Set
+  `NAUKRI_REQUIRE_LOGIN=true` to use the logged-in UI instead — no URLs, so no Apply and
+  no enrichment, plus more OTP/captcha risk. **LinkedIn = has Apply links.** Track +
+  ranking work for both.
 - **LinkedIn may challenge** an automated login (OTP/captcha) — then you'll get a Telegram
-  "re-auth needed" alert and that source is skipped for the run. Try again later.
-- **Gemini free tier is small** (`gemini-3.5-flash` ≈ 5 req/min, `2.0-flash` ≈ 15, plus a
-  daily cap). A first run of many new jobs can exhaust it. The ranker retries per-minute
-  rate-limits automatically; if the **daily** quota hits 0, wait for reset or enable
-  billing on the key. Unchanged jobs are cached, so later runs are cheap.
+  "re-auth needed" alert and that source is skipped for the run. Use
+  `uv run python -m app.main login --source linkedin` to log in manually once and reuse that session.
+- **Hosted-provider free tiers are small** (often a few requests/minute plus a daily cap).
+  A first run of many new jobs can exhaust one. The ranker retries per-minute rate-limits
+  automatically; if the **daily** quota hits 0, wait for reset, enable billing, or switch
+  to local Ollama. Unchanged jobs are cached, so later runs are cheap.
+- **The daily run is `collect → dedup → pre-filter → enrich → rank → notify`.** The
+  pre-filter is cheap string matching that shortlists jobs worth an LLM call; enrich
+  then opens the real job pages for that shortlist (search cards carry almost no
+  text). Only the shortlist is scored, so `PREFILTER_MAX_JOBS` is your main cost dial.
+- **Keep it running across sleep/reboot**: `uv run python -m app.main install-schedule`
+  writes a macOS LaunchAgent that restarts the scheduler at login and after a crash. It
+  does *not* activate it for you — it prints a `launchctl unload …; launchctl load …`
+  line, and the agent only runs once you paste that in. Verify with
+  `launchctl list | grep jobhunter`. It's a per-user agent, so it needs you logged in
+  (the scrapers need a real desktop session). If the Mac was asleep at `RUN_HOUR`, the
+  run is caught up ~10s after the scheduler next starts, or run `catch-up` by hand.
+- **Switching provider** is easiest on the dashboard's **Settings → AI Provider** panel —
+  pick a provider, leave Base URL / Model blank for its defaults, Save, then hit
+  **Test connection** to confirm it answers before the next run.
 - **No auth on the API/UI** — fine on localhost; don't expose ports 8000/5173 publicly.
 
 ---
@@ -221,9 +255,12 @@ Once set, every successful run pushes the top picks; failed runs send an alert.
 |---|---|
 | Matches page empty | No successful run yet, or ranking failed. Run `run-pipeline`; check the Runs tab for the error. |
 | Run FAILED: "no candidate profile" | Run `parse-resume` first. |
-| Run FAILED: credentials not configured | Fill `NAUKRI_*` / `LINKEDIN_*` in `.env`. |
-| Run FAILED: 429 / quota / `limit: 0` | Gemini free quota spent — wait for daily reset or enable billing; consider a flash-lite model. |
-| Naukri/LinkedIn "login failed" or "Access Denied" | Make sure `COLLECTOR_HEADLESS=false`; check creds; LinkedIn may need you to log in once manually if it's challenging automation. |
+| Run FAILED: credentials not configured | Only login-mode sources need creds: fill `LINKEDIN_*`, and `NAUKRI_*` only if you set `NAUKRI_REQUIRE_LOGIN=true` (the default Naukri path needs none). |
+| `install-schedule` ran but nothing fires | It only writes the plist. Run the `launchctl load …` line it printed, then check `launchctl list \| grep jobhunter`. |
+| Run FAILED: 429 / quota / `limit: 0` | Provider quota spent — wait for reset, enable billing, or switch to local Ollama. |
+| Run FAILED: "unreachable ... Is the local server running?" | Start Ollama (`ollama serve`) and pull the model (`ollama pull llama3.2`). |
+| Run FAILED: "An API key is required" | Set `LLM_API_KEY` in `.env` or the Settings page (local `ollama`/`lmstudio` need none). |
+| Naukri/LinkedIn "login failed" or "Access Denied" | Make sure `COLLECTOR_HEADLESS=false`; check creds; run `uv run python -m app.main login --source naukri\|linkedin` to refresh the saved session. |
 | 0 jobs scraped after a site change | The collector's text parser needs refreshing for the new markup. |
 | No Telegram messages | `TELEGRAM_CHAT_ID` must be your numeric id (§4), not the bot name. |
 | Changed `.env`, nothing changed | Restart the API: `pkill -f "app.main serve-api"` then start it again. |
@@ -237,8 +274,12 @@ uv run python -m app.main --help                       # list commands
 uv run python -m app.main parse-resume --path FILE      # load/refresh your résumé
 uv run python -m app.main run-pipeline                  # scrape + dedup + rank now (headed)
 uv run python -m app.main collect --source naukri       # one source only
+uv run python -m app.main login --source linkedin       # one-time manual login; saves session
 uv run python -m app.main serve-api --port 8000         # JSON API + dashboard backend
 uv run python -m app.main start-scheduler               # daily run at RUN_HOUR
+uv run python -m app.main install-schedule              # write the LaunchAgent (then run the
+                                                        #   launchctl load line it prints)
+uv run python -m app.main catch-up                      # run now if today's run was missed
 uv run python -m app.main notify-test [--failure]       # test Telegram
 uv run alembic upgrade head                             # (re)build the DB
 uv run pytest                                           # run the test suite

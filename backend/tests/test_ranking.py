@@ -1,4 +1,4 @@
-"""Tests for the M5 cached LLM ranking engine (offline — Gemini is injected)."""
+"""Tests for the M5 cached LLM ranking engine (offline — the LLM is injected)."""
 
 from __future__ import annotations
 
@@ -9,13 +9,18 @@ from app.config import Settings
 from app.database import repository as repo
 from app.database.models import Job
 from app.ranking import cache
-from app.ranking.prompt import RankingResult, build_ranking_prompt
+from app.ranking.prompt import (
+    RankingResult,
+    build_ranking_prompt,
+    profile_fingerprint,
+    ranking_cache_key,
+)
 from app.ranking.ranking_service import RankingError, rank_run
 from sqlalchemy.orm import Session
 
 
 class CountingLLM:
-    """A fake Gemini call that counts invocations (thread-safe)."""
+    """A fake LLM call that counts invocations (thread-safe)."""
 
     def __init__(self, result: dict | None = None):
         self.calls = 0
@@ -27,14 +32,19 @@ class CountingLLM:
             "reason": "fit",
         }
 
-    def __call__(self, prompt, *, model, api_key):
+    def __call__(self, prompt: str) -> dict:
         with self._lock:
             self.calls += 1
         return dict(self._result)
 
 
 def _settings(**kw) -> Settings:
-    base = dict(llm_model="gemini-test", gemini_api_key="k", ranking_max_concurrency=2)
+    base = dict(
+        llm_provider="openai",
+        llm_model="fake-model",
+        llm_api_key="k",
+        ranking_max_concurrency=2,
+    )
     base.update(kw)
     return Settings(**base)
 
@@ -93,11 +103,14 @@ def test_prompt_includes_profile_and_job_and_requires_json():
         skills_json = ["python", "fastapi"]
         desired_roles_json = ["Backend Engineer"]
         preferred_locations_json = ["Remote"]
+        resume_text = "Jane Doe. Led the payments rewrite at Acme, 40M req/day."
 
     prompt = build_ranking_prompt(_P(), job)
     assert "Senior Backend Engineer" in prompt
     assert "Jane" in prompt
     assert '"score"' in prompt and '"pros"' in prompt and '"reason"' in prompt
+    # The ranker sees the full résumé, not just the extracted summary fields.
+    assert "payments rewrite" in prompt
 
 
 def test_ranking_result_rejects_out_of_range_score():
@@ -113,13 +126,13 @@ def test_ranking_result_rejects_out_of_range_score():
 def test_cache_round_trip(session: Session):
     assert cache.get_cached(session, "miss") is None
     result = RankingResult(score=88, pros=["remote"], cons=[], reason="great")
-    cache.store(session, "hash-1", result, "gemini-test")
+    cache.store(session, "hash-1", result, "fake-model")
 
     hit = cache.get_cached(session, "hash-1")
     assert hit is not None
     assert hit.result.score == 88
     assert hit.result.pros == ["remote"]
-    assert hit.llm_model == "gemini-test"
+    assert hit.llm_model == "fake-model"
 
 
 # ------------------------------------------------------------------- end-to-end
@@ -145,9 +158,14 @@ def test_rank_run_scores_caches_and_writes_matches(scope):
         assert len(matches) == 3
         # The LLM score IS the match score — no blending.
         assert all(m.score == 80 for m in matches)
-        assert all(m.llm_model == "gemini-test" for m in matches)
-        # Cache was populated for every job.
-        assert cache.get_cached(s, "hash-0") is not None
+        assert all(m.llm_model == "fake-model" for m in matches)
+        # Cache was populated for every job, keyed by résumé + model + prompt version.
+        profile = repo.get_candidate_profile(s)
+        job = repo.get_jobs_for_run(s, run_id)[0]
+        key = ranking_cache_key(
+            job, profile_fp=profile_fingerprint(profile), model=_settings().llm_model
+        )
+        assert cache.get_cached(s, key) is not None
 
 
 def test_rerun_on_same_jobs_makes_zero_new_llm_calls(scope):
@@ -198,7 +216,7 @@ def test_retry_once_on_malformed_then_succeeds(scope):
         def __init__(self):
             self.calls = 0
 
-        def __call__(self, prompt, *, model, api_key):
+        def __call__(self, prompt: str) -> dict:
             self.calls += 1
             if self.calls == 1:
                 return {"score": "not a number"}  # malformed
@@ -218,7 +236,7 @@ def test_persistent_malformed_raises(scope):
         run_id = repo.start_run(s).id
         _seed_jobs(s, run_id, n=1)
 
-    def junk_llm(prompt, *, model, api_key):
+    def junk_llm(prompt: str) -> dict:
         return {"score": "garbage"}
 
     with pytest.raises(RankingError):

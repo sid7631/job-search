@@ -48,9 +48,15 @@ def _cmd_collect(args: argparse.Namespace) -> int:
     from app.database import repository as repo
     from app.database.connection import session_scope
     from app.database.models import Run, RunStatus
+    from app.runtime_config import effective_settings
+
+    # Effective settings, not raw `.env`: the search terms may be derived from the
+    # résumé or overridden on the Settings page, and a bare `.env` read loses both.
+    with session_scope() as session:
+        settings = effective_settings(session)
 
     collectors = {"naukri": NaukriCollector, "linkedin": LinkedInCollector}
-    collector = collectors[args.source]()
+    collector = collectors[args.source](settings=settings)
 
     with session_scope() as session:
         run_id = repo.start_run(session).id
@@ -58,7 +64,10 @@ def _cmd_collect(args: argparse.Namespace) -> int:
     saved = collector.collect(run_id)
 
     with session_scope() as session:
-        error = session.get(Run, run_id).error_text
+        run = session.get(Run, run_id)
+        error = run.error_text or "; ".join(
+            f"{k}: {v}" for k, v in (run.source_errors_json or {}).items()
+        )
         repo.finish_run(
             session,
             run_id,
@@ -126,6 +135,55 @@ def _cmd_start_scheduler(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_install_schedule(args: argparse.Namespace) -> int:
+    """Write a macOS LaunchAgent so the scheduler survives logout/reboot."""
+    from app.scheduler.launchd import LABEL, install
+
+    path = install()
+    print(f"[install-schedule] wrote {path}")
+    print("\nActivate it with:")
+    print(f"  launchctl unload {path} 2>/dev/null; launchctl load {path}")
+    print(f"\nCheck it is running:  launchctl list | grep {LABEL}")
+    print(f"Remove it later:      launchctl unload {path} && rm {path}")
+    print("\nNote: the scrapers need a real desktop session (headed Chrome), so this")
+    print("runs at login — not as a system daemon on a headless box.")
+    return 0
+
+
+def _cmd_catch_up(args: argparse.Namespace) -> int:
+    """Run the pipeline if today's scheduled run was missed (no-op otherwise)."""
+    from app.scheduler.jobs import catch_up_if_missed
+
+    ran = catch_up_if_missed()
+    print("[catch-up] ran a missed pipeline" if ran else "[catch-up] nothing to do")
+    return 0
+
+
+def _cmd_login(args: argparse.Namespace) -> int:
+    """Open a browser for a one-time manual login and save the session."""
+    from app.collectors.linkedin import LinkedInCollector
+    from app.collectors.naukri import NaukriCollector
+    from app.database.connection import session_scope
+    from app.runtime_config import effective_settings
+
+    with session_scope() as session:
+        settings = effective_settings(session)
+    collector = (
+        NaukriCollector(settings=settings)
+        if args.source == "naukri"
+        else LinkedInCollector(settings=settings)
+    )
+    ok = collector.interactive_login(timeout_seconds=args.timeout)
+    if ok:
+        print(f"[login] {args.source}: session saved. Future runs will reuse it.")
+        return 0
+    print(
+        f"[login] {args.source}: did not reach a logged-in page in time.",
+        file=sys.stderr,
+    )
+    return 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Construct the top-level argument parser with all subcommands."""
     parser = argparse.ArgumentParser(
@@ -182,6 +240,30 @@ def build_parser() -> argparse.ArgumentParser:
         help="Start the in-process APScheduler daemon (fires the pipeline daily).",
     )
     p_sched.set_defaults(func=_cmd_start_scheduler)
+
+    p_install = sub.add_parser(
+        "install-schedule",
+        help="Write a macOS LaunchAgent so the scheduler restarts at login/after a crash.",
+    )
+    p_install.set_defaults(func=_cmd_install_schedule)
+
+    p_login = sub.add_parser(
+        "login",
+        help="Open a browser to log in by hand once and save the session (fixes checkpoints).",
+    )
+    p_login.add_argument(
+        "--source", choices=["naukri", "linkedin"], required=True, help="Which site to log in to."
+    )
+    p_login.add_argument(
+        "--timeout", type=int, default=300, help="Seconds to wait for you to finish (default 300)."
+    )
+    p_login.set_defaults(func=_cmd_login)
+
+    p_catch = sub.add_parser(
+        "catch-up",
+        help="Run the pipeline now if today's scheduled run was missed.",
+    )
+    p_catch.set_defaults(func=_cmd_catch_up)
 
     return parser
 

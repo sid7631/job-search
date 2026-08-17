@@ -20,6 +20,8 @@ export interface Match {
   company: string
   location: string | null
   url: string | null
+  /** Which job board this came from ("naukri", "linkedin"). */
+  source: string
   score: number
   pros: string[]
   cons: string[]
@@ -27,10 +29,14 @@ export interface Match {
   llm_model: string | null
   run_id: number
   created_at: string
+  /** First seen in this run — badge it as new rather than a repeat from earlier days. */
+  is_new: boolean
 }
 
 export interface MatchDetail extends Match {
   description: string | null
+  /** True when `description` is the real posting, not the search-card summary. */
+  description_enriched: boolean
   skills: string[]
 }
 
@@ -59,6 +65,8 @@ export interface Run {
   status: string
   source_counts: Record<string, unknown>
   error_text: string | null
+  /** {source: message} for sources that were skipped; the run can still be a SUCCESS. */
+  source_errors: Record<string, string>
 }
 
 export interface Profile {
@@ -70,6 +78,31 @@ export interface Profile {
   preferred_locations: string[]
   desired_roles: string[]
   updated_at: string
+}
+
+// The provider list is served by the backend (`app/llm_client.py` is the single
+// source of truth) so the dropdown can never drift from what the client supports.
+export interface LLMProviderInfo {
+  key: string
+  label: string
+  default_base_url: string
+  default_model: string
+  requires_key: boolean
+  docs_url: string
+}
+
+export type LLMTestInput = Partial<{
+  llm_provider: string
+  llm_base_url: string
+  llm_model: string
+  llm_api_key: string
+}>
+
+export interface LLMTestResult {
+  ok: boolean
+  provider: string
+  model: string
+  detail: string | null
 }
 
 export interface AppSettings {
@@ -84,6 +117,17 @@ export interface AppSettings {
   linkedin_location: string
   telegram_min_score: number
   telegram_top_n: number
+  llm_provider: string
+  llm_base_url: string
+  llm_model: string
+  llm_api_key_set: boolean
+  llm_effective_base_url: string
+  llm_effective_model: string
+  llm_requires_key: boolean
+  /** Search terms implied by the parsed resume, keyed by setting name. */
+  derived_from_resume: Record<string, string>
+  /** Fields currently coming from the resume rather than an explicit value. */
+  auto_fields: string[]
 }
 
 export type AppSettingsUpdate = Partial<{
@@ -98,6 +142,10 @@ export type AppSettingsUpdate = Partial<{
   linkedin_location: string
   telegram_min_score: number
   telegram_top_n: number
+  llm_provider: string
+  llm_base_url: string
+  llm_model: string
+  llm_api_key: string
 }>
 
 export class ApiError extends Error {
@@ -190,6 +238,19 @@ export const api = {
 
   updateSettings(body: AppSettingsUpdate): Promise<AppSettings> {
     return request<AppSettings>('/api/settings', { method: 'PUT', body: JSON.stringify(body) })
+  },
+
+  listLLMProviders(): Promise<LLMProviderInfo[]> {
+    return request<LLMProviderInfo[]>('/api/settings/llm/providers')
+  },
+
+  // Sends the on-screen values so a key that is typed but not yet saved is what
+  // gets tested. Blank fields fall back to the saved settings; nothing is written.
+  testLLM(body: LLMTestInput = {}): Promise<LLMTestResult> {
+    return request<LLMTestResult>('/api/settings/llm/test', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    })
   },
 
   async uploadResume(file: File): Promise<Profile> {

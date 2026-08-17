@@ -6,12 +6,23 @@ __pycache__/
 .ruff_cache/
 
 # Environment / secrets
+# `.env` alone missed real-secret copies like `.env.bak`, so ignore every variant
+# and re-admit the one template that belongs in the repo.
 .env
+.env.*
+!.env.example
 
-# Local database
+# Local database (including dated snapshots — `*.db` does not match
+# `job_hunter.db.backup-20260817-005923`)
 *.db
 *.sqlite3
+*.db.backup-*
 
-# Playwright session state
+# Playwright session state (live cookies for your Naukri/LinkedIn accounts)
 storage_state.json
 .playwright/
+
+# Scheduler logs — `install-schedule` points launchd at <repo>/backend/logs,
+# and those logs quote scraped job text and error payloads.
+logs/
+*.log

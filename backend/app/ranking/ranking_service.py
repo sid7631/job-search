@@ -2,12 +2,12 @@
 
 For each job seen in a run:
 1. Look up `ranking_cache` by `content_hash`. On a hit, reuse it — no LLM call.
-2. On a miss, call Gemini (JSON mode), validate against `RankingResult` (retry once
-   on malformed output), and write the cache.
+2. On a miss, call the configured LLM provider, validate against `RankingResult`
+   (retry once on malformed output), and write the cache.
 3. Write one `job_matches` row per job for the run.
 
-Cache misses are ranked with a concurrency-limited thread pool (the Gemini SDK has
-no batch endpoint).
+Cache misses are ranked with a concurrency-limited thread pool (none of the
+supported providers has a batch endpoint).
 
 **Single scoring source:** the LLM `score` IS the match score. It is never averaged
 with a rule-based skill/experience/location formula — that would double-count.
@@ -16,9 +16,7 @@ Deterministic signals may only be used as cheap pre-filters *before* ranking.
 
 from __future__ import annotations
 
-import json
 import logging
-import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import AbstractContextManager
@@ -31,14 +29,22 @@ from app.config import Settings, get_settings
 from app.database import connection
 from app.database import repository as repo
 from app.database.models import Job
+from app.llm_client import LLMClient, LLMError
 from app.ranking import cache
-from app.ranking.prompt import RankingResult, build_ranking_prompt
+from app.ranking.feedback import load_feedback, render_feedback
+from app.ranking.prompt import (
+    RankingResult,
+    build_ranking_prompt,
+    profile_fingerprint,
+    ranking_cache_key,
+)
 
 logger = logging.getLogger(__name__)
 
 SessionScope = Callable[[], AbstractContextManager[Session]]
-# A pluggable LLM call: (prompt, *, model, api_key) -> parsed JSON object.
-LLMCallable = Callable[..., dict]
+# A pluggable LLM call: (prompt) -> parsed JSON object.
+# The default implementation reads provider/model/key from settings.
+LLMCallable = Callable[[str], dict]
 
 
 class RankingError(RuntimeError):
@@ -50,7 +56,7 @@ class _Item:
     """Per-job working state through the three phases."""
 
     job_id: int
-    content_hash: str
+    cache_key: str
     prompt: str | None  # set only for cache misses
     result: RankingResult | None
     llm_model: str | None
@@ -99,17 +105,32 @@ def rank_run(
         else:
             job_list = repo.get_jobs_for_run(session, run_id)
 
+        # Your tracked decisions steer the ranker; they are part of the cache key so
+        # changing your mind re-scores instead of replaying the old judgement.
+        feedback = (
+            load_feedback(session, limit=settings.feedback_max_examples)
+            if settings.feedback_enabled
+            else None
+        )
+        feedback_block = render_feedback(feedback) if feedback else ""
+        feedback_fp = feedback.fingerprint() if feedback else ""
+
+        # Judgements are only reusable for this résumé + model + prompt version.
+        profile_fp = profile_fingerprint(profile)
         items: list[_Item] = []
         for job in job_list:
-            hit = cache.get_cached(session, job.content_hash)
+            key = ranking_cache_key(
+                job, profile_fp=profile_fp, model=settings.llm_model, feedback_fp=feedback_fp
+            )
+            hit = cache.get_cached(session, key)
             if hit is not None:
-                items.append(_Item(job.id, job.content_hash, None, hit.result, hit.llm_model, True))
+                items.append(_Item(job.id, key, None, hit.result, hit.llm_model, True))
             else:
                 items.append(
                     _Item(
                         job.id,
-                        job.content_hash,
-                        build_ranking_prompt(profile, job),
+                        key,
+                        build_ranking_prompt(profile, job, feedback_block=feedback_block),
                         None,
                         settings.llm_model,
                         False,
@@ -132,7 +153,7 @@ def rank_run(
         for it in items:
             assert it.result is not None
             if not it.from_cache:
-                cache.store(session, it.content_hash, it.result, it.llm_model or settings.llm_model)
+                cache.store(session, it.cache_key, it.result, it.llm_model or settings.llm_model)
             repo.save_match(
                 session,
                 job_id=it.job_id,
@@ -160,25 +181,31 @@ def _rank_misses(
     misses: list[_Item], settings: Settings, llm: LLMCallable | None
 ) -> dict[int, RankingResult]:
     """Rank cache-miss jobs with a bounded thread pool; returns job_id -> result."""
-    caller = llm or _call_gemini
+    caller = llm or _default_caller(settings)
     workers = max(1, settings.ranking_max_concurrency)
 
     def work(item: _Item) -> tuple[int, RankingResult]:
         assert item.prompt is not None
-        return item.job_id, _rank_one(item.prompt, caller, settings)
+        return item.job_id, _rank_one(item.prompt, caller)
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
         return dict(pool.map(work, misses))
 
 
-def _rank_one(prompt: str, caller: LLMCallable, settings: Settings) -> RankingResult:
+def _default_caller(settings: Settings) -> LLMCallable:
+    """Build a thread-safe caller from the configured provider settings."""
+    client = LLMClient.from_settings(settings)
+    return client.__call__
+
+
+def _rank_one(prompt: str, caller: LLMCallable) -> RankingResult:
     """Call the LLM and validate, retrying once on malformed output."""
     last_exc: ValidationError | None = None
     for _attempt in range(2):  # initial try + one retry
-        raw = caller(prompt, model=settings.llm_model, api_key=settings.gemini_api_key)
         try:
+            raw = caller(prompt)
             return RankingResult.model_validate(raw)
-        except ValidationError as exc:
+        except (ValidationError, LLMError) as exc:
             last_exc = exc
     raise RankingError(f"LLM returned malformed ranking twice: {last_exc}")
 
@@ -186,36 +213,3 @@ def _rank_one(prompt: str, caller: LLMCallable, settings: Settings) -> RankingRe
 def _is_rate_limit(exc: Exception) -> bool:
     text = str(exc).lower()
     return any(k in text for k in ("429", "resource_exhausted", "quota", "rate limit"))
-
-
-def _call_gemini(prompt: str, *, model: str, api_key: str) -> dict:
-    """Call Gemini in JSON mode and return the parsed object.
-
-    Retries on rate-limit (429) so free-tier per-minute quotas slow a run down
-    instead of failing it.
-    """
-    if not api_key:
-        raise RankingError("GEMINI_API_KEY is not set; cannot rank jobs.")
-
-    import google.generativeai as genai
-
-    genai.configure(api_key=api_key)
-    gemini = genai.GenerativeModel(model)
-    config = {"response_mime_type": "application/json", "temperature": 0}
-
-    last_exc: Exception | None = None
-    for attempt in range(6):
-        try:
-            response = gemini.generate_content(prompt, generation_config=config)
-            return json.loads(response.text)
-        except (ValueError, AttributeError) as exc:
-            raise RankingError(f"Gemini did not return valid JSON: {exc}") from exc
-        except Exception as exc:  # noqa: BLE001 - classify rate limits vs. real errors
-            if _is_rate_limit(exc) and attempt < 5:
-                wait = 8 * (attempt + 1)
-                logger.warning("Gemini rate-limited (attempt %d); waiting %ds", attempt + 1, wait)
-                time.sleep(wait)
-                last_exc = exc
-                continue
-            raise RankingError(f"Gemini call failed: {exc}") from exc
-    raise RankingError(f"Gemini rate limit did not clear: {last_exc}")

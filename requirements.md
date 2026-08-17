@@ -19,7 +19,7 @@ These are settled — do not re-litigate during the build.
 | ORM / DB access | **SQLAlchemy 2.x + Alembic** | Alembic so the SQLite→Postgres swap is painless later. |
 | Scraping | **Playwright (Python)** | Persisted `storage_state`. Naukri first, LinkedIn second. |
 | Embeddings / pgvector | **NOT in scope for v1** | Daily new-job volume is low (50–300). Send deduped jobs straight to the LLM. Revisit only if volume forces it. |
-| LLM ranking | **Gemini** (configurable) | Structured/JSON output enforced. Results cached by job content hash. |
+| LLM ranking | **Any provider** (Ollama local/cloud, OpenAI, Anthropic, Groq, … — configurable) | Structured/JSON output enforced. Results cached by job content hash. |
 | Notifications | **Telegram Bot** | Daily push of top picks. |
 | Scheduler | **APScheduler** (in-process) or system cron | Pick APScheduler so the whole app runs as one process. |
 | Config / secrets | **`.env` + pydantic-settings** | No secrets in code or DB. |
@@ -41,7 +41,7 @@ APScheduler (08:00) ──► Collectors (Playwright) ──► raw_jobs (SQLite
                                         Dedup (exact + fuzzy/rapidfuzz)
                                                         │
                                                         ▼
-                              LLM Ranking (Gemini, cached by job hash) ──► job_matches
+                              LLM Ranking (configurable, cached by job hash) ──► job_matches
                                                         │
                                           ┌─────────────┴─────────────┐
                                           ▼                           ▼
@@ -85,7 +85,7 @@ Update the status column as work completes. Suggested statuses: `TODO` / `IN PRO
 - [ ] Create monorepo: `/backend`, `/frontend`, root `README.md`, root `docker-compose.yml` (stub).
 - [ ] Backend: Python 3.12, `uv` or `poetry` for deps, `ruff` + `black`, `pytest` configured.
 - [ ] Backend folder layout (see below), all packages with `__init__.py` and a `main.py` that runs and exits cleanly.
-- [ ] `pydantic-settings` config module reading from `.env`; provide `.env.example` listing every key (`GEMINI_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `NAUKRI_EMAIL`, `NAUKRI_PASSWORD`, `LINKEDIN_*`, `DB_URL`, `RUN_HOUR`).
+- [ ] `pydantic-settings` config module reading from `.env`; provide `.env.example` listing every key (`LLM_PROVIDER`, `LLM_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `NAUKRI_EMAIL`, `NAUKRI_PASSWORD`, `LINKEDIN_*`, `DB_URL`, `RUN_HOUR`).
 - [ ] Frontend: Vite + React + TypeScript scaffold, ESLint + Prettier, a component lib installed (shadcn/ui preferred), renders a placeholder page.
 - [ ] Root `README.md`: how to run backend, frontend, and the daily pipeline locally.
 
@@ -155,7 +155,7 @@ runs(id, started_at, finished_at, status, source_counts_json, error_text)
 
 **Tasks**
 - [ ] Accept a PDF/DOCX resume path; extract text.
-- [ ] Use the LLM (Gemini) to extract: years_experience, skills[], companies[], domain, preferred_locations[], desired_roles[].
+- [ ] Use the LLM to extract: years_experience, skills[], companies[], domain, preferred_locations[], desired_roles[].
 - [ ] Store both the structured fields and `raw_parsed_json` + `resume_text` in `candidate_profile`.
 - [ ] CLI: `python -m app.main parse-resume --path resume.pdf` (idempotent — updates the single profile row).
 - [ ] Validate output against a pydantic schema; fail loudly if the LLM returns junk.
@@ -199,11 +199,11 @@ runs(id, started_at, finished_at, status, source_counts_json, error_text)
 
 ## M5 — LLM Ranking Engine (Cached)
 
-**Scope:** Score each new job against the profile via Gemini, with structured output and content-hash caching so unchanged jobs are never re-ranked.
+**Scope:** Score each new job against the profile via the configured LLM, with structured output and content-hash caching so unchanged jobs are never re-ranked.
 
 **Tasks**
 - [ ] `prompt.py`: builds the ranking prompt (candidate profile + job description) and **requires JSON output**: `{ score: 0-100, pros: [], cons: [], reason: "" }`.
-- [ ] Enforce schema with Gemini structured/JSON mode; validate with pydantic; retry once on malformed output.
+- [ ] Enforce schema with the provider's JSON mode where supported; validate with pydantic; retry once on malformed output.
 - [ ] **Cache:** before ranking, check `ranking_cache` by `content_hash`; on hit, reuse. On miss, call LLM and write cache.
 - [ ] Batch calls where the SDK allows; otherwise concurrency-limited async.
 - [ ] Write one `job_matches` row per job for the current `run_id`.

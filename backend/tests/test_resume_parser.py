@@ -17,8 +17,8 @@ from pypdf import PdfWriter
 from sqlalchemy.orm import Session
 
 
-def _fake_llm(prompt: str, *, model: str, api_key: str) -> dict:
-    """Stand-in for Gemini: returns a well-formed parsed object."""
+def _fake_llm(prompt: str) -> dict:
+    """Stand-in LLM: returns a well-formed parsed object."""
     assert "RESUME:" in prompt
     return {
         "name": "Jane Doe",
@@ -74,7 +74,7 @@ def test_extract_missing_file_raises(tmp_path):
 
 
 def test_parse_resume_text_validates_into_schema():
-    parsed = parse_resume_text("some resume text", model="m", api_key="k", llm=_fake_llm)
+    parsed = parse_resume_text("some resume text", llm=_fake_llm)
     assert isinstance(parsed, ParsedResume)
     assert parsed.name == "Jane Doe"
     assert parsed.years_experience == 6.0
@@ -82,16 +82,16 @@ def test_parse_resume_text_validates_into_schema():
 
 
 def test_parse_resume_text_fails_loudly_on_junk():
-    def junk_llm(prompt, *, model, api_key):
+    def junk_llm(prompt: str) -> dict:
         return {"years_experience": "a lifetime", "skills": "python"}
 
     with pytest.raises(ResumeParseError):
-        parse_resume_text("some resume text", model="m", api_key="k", llm=junk_llm)
+        parse_resume_text("some resume text", llm=junk_llm)
 
 
 def test_parse_resume_text_rejects_empty_text():
     with pytest.raises(ResumeParseError):
-        parse_resume_text("   ", model="m", api_key="k", llm=_fake_llm)
+        parse_resume_text("   ", llm=_fake_llm)
 
 
 # ------------------------------------------------------------------- end-to-end
@@ -99,7 +99,7 @@ def test_parse_resume_text_rejects_empty_text():
 
 def test_parse_resume_populates_single_profile_row(session: Session, tmp_path):
     path = _write_docx(tmp_path / "resume.docx", "Jane Doe", "6 years backend at Acme")
-    settings = Settings(gemini_api_key="k", llm_model="m")
+    settings = Settings(llm_provider="openai", llm_api_key="k", llm_model="m")
 
     profile = parse_resume(session, path, settings=settings, llm=_fake_llm)
 
@@ -117,12 +117,12 @@ def test_parse_resume_populates_single_profile_row(session: Session, tmp_path):
 
 def test_parse_resume_is_idempotent(session: Session, tmp_path):
     path = _write_docx(tmp_path / "resume.docx", "Jane Doe")
-    settings = Settings(gemini_api_key="k", llm_model="m")
+    settings = Settings(llm_provider="openai", llm_api_key="k", llm_model="m")
 
     first = parse_resume(session, path, settings=settings, llm=_fake_llm)
 
-    def updated_llm(prompt, *, model, api_key):
-        return {**_fake_llm(prompt, model=model, api_key=api_key), "years_experience": 7}
+    def updated_llm(prompt: str) -> dict:
+        return {**_fake_llm(prompt), "years_experience": 7}
 
     second = parse_resume(session, path, settings=settings, llm=updated_llm)
 

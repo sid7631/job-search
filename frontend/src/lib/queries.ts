@@ -93,3 +93,18 @@ export function useUpdateSettings() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
   })
 }
+
+export function useLLMProviders() {
+  return useQuery({
+    queryKey: ['llm-providers'],
+    queryFn: () => api.listLLMProviders(),
+    // The registry only changes when the backend is redeployed.
+    staleTime: Infinity,
+  })
+}
+
+export function useTestLLM() {
+  return useMutation({
+    mutationFn: (body: import('@/lib/api').LLMTestInput) => api.testLLM(body),
+  })
+}

@@ -1,6 +1,7 @@
 import { Check, ExternalLink, Minus, Plus } from 'lucide-react'
 
-import { ScoreBadge } from '@/components/score-badge'
+import { MatchScore } from '@/components/score-badge'
+import { SourceTag } from '@/components/source-tag'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -51,8 +52,7 @@ export function MatchDetailDialog({
         ) : (
           <>
             <DialogHeader className="space-y-0 border-b border-border p-6 pb-5 text-left">
-              <div className="flex items-start gap-4">
-                <ScoreBadge score={data.score ?? 0} size="lg" />
+              <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0 flex-1">
                   <DialogTitle className="font-display text-xl leading-tight">
                     {data.title}
@@ -61,6 +61,9 @@ export function MatchDetailDialog({
                     {data.company}
                     {data.location ? ` · ${data.location}` : ''}
                   </DialogDescription>
+                  <div className="mt-2">
+                    <SourceTag source={data.source} />
+                  </div>
                   {data.skills.length > 0 && (
                     <div className="mt-3 flex flex-wrap gap-1.5">
                       {data.skills.slice(0, 12).map((s) => (
@@ -74,6 +77,7 @@ export function MatchDetailDialog({
                     </div>
                   )}
                 </div>
+                <MatchScore score={data.score ?? 0} />
               </div>
             </DialogHeader>
 
@@ -115,7 +119,17 @@ export function MatchDetailDialog({
                 </div>
 
                 {data.description && (
-                  <Section title="Description">
+                  <Section
+                    title={
+                      data.description_enriched ? 'Full description' : 'Description (from card)'
+                    }
+                  >
+                    {!data.description_enriched && (
+                      <p className="mb-2 text-xs text-muted-foreground/70">
+                        The full posting hasn&rsquo;t been fetched for this job, so the AI scored it
+                        on the search-result summary alone.
+                      </p>
+                    )}
                     <p className="whitespace-pre-line text-sm leading-relaxed text-muted-foreground">
                       {data.description}
                     </p>

@@ -135,6 +135,17 @@ export function RunsPage() {
                       <span className="line-clamp-2 text-xs text-destructive">
                         {run.error_text}
                       </span>
+                    ) : Object.keys(run.source_errors ?? {}).length > 0 ? (
+                      // One source was skipped; the run itself still succeeded, so
+                      // this is a warning about that source — not a failed run.
+                      <div className="space-y-1">
+                        {Object.entries(run.source_errors).map(([source, message]) => (
+                          <p key={source} className="line-clamp-2 text-xs text-amber-500">
+                            <span className="font-medium capitalize">{source} skipped:</span>{' '}
+                            {message}
+                          </p>
+                        ))}
+                      </div>
                     ) : (
                       <span className="text-xs text-muted-foreground/60">—</span>
                     )}

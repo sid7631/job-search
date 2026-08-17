@@ -93,7 +93,7 @@ def test_save_match_upserts_per_job_and_run(session: Session):
         job_id=job.id,
         run_id=run.id,
         score=70,
-        llm_model="gemini-1.5-flash",
+        llm_model="fake-model",
         pros=["good stack"],
         cons=["onsite"],
         reason="solid fit",
@@ -103,7 +103,7 @@ def test_save_match_upserts_per_job_and_run(session: Session):
 
     # Re-ranking the same (job, run) updates the existing row.
     updated = repo.save_match(
-        session, job_id=job.id, run_id=run.id, score=88, llm_model="gemini-1.5-flash"
+        session, job_id=job.id, run_id=run.id, score=88, llm_model="fake-model"
     )
     assert updated.id == match.id
     assert updated.score == 88
@@ -184,7 +184,7 @@ def test_ranking_cache_miss_then_hit(session: Session):
         session,
         content_hash="hash-1",
         score=82,
-        llm_model="gemini-1.5-flash",
+        llm_model="fake-model",
         pros=["remote"],
         cons=[],
         reason="great match",
@@ -198,7 +198,7 @@ def test_ranking_cache_miss_then_hit(session: Session):
 
     # Upsert by content_hash.
     again = repo.set_cached_ranking(
-        session, content_hash="hash-1", score=95, llm_model="gemini-1.5-flash"
+        session, content_hash="hash-1", score=95, llm_model="fake-model"
     )
     assert again.score == 95
     assert repo.get_cached_ranking(session, "hash-1").score == 95

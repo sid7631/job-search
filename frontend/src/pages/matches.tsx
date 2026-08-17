@@ -1,8 +1,8 @@
-import { Sparkles } from 'lucide-react'
+import { LayoutGrid, List, Sparkles } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
-import { MatchCard } from '@/components/match-card'
+import { MatchCard, MatchRow } from '@/components/match-card'
 import { MatchDetailDialog } from '@/components/match-detail-dialog'
 import { CardSkeletonGrid, EmptyState, ErrorState } from '@/components/states'
 import {
@@ -21,9 +21,50 @@ const SCORE_FILTERS = [
   { value: '90', label: '90+' },
 ]
 
+type ViewMode = 'grid' | 'list'
+
+const VIEW_KEY = 'matches:view'
+
+function ViewToggle({ value, onChange }: { value: ViewMode; onChange: (v: ViewMode) => void }) {
+  const options: { mode: ViewMode; icon: typeof LayoutGrid; label: string }[] = [
+    { mode: 'grid', icon: LayoutGrid, label: 'Card view' },
+    { mode: 'list', icon: List, label: 'List view' },
+  ]
+  return (
+    <div className="flex items-center rounded-lg border border-border bg-background/40 p-0.5">
+      {options.map(({ mode, icon: Icon, label }) => (
+        <button
+          key={mode}
+          type="button"
+          onClick={() => onChange(mode)}
+          aria-label={label}
+          aria-pressed={value === mode}
+          title={label}
+          className={`rounded-md p-1.5 transition-colors ${
+            value === mode
+              ? 'bg-primary/15 text-primary'
+              : 'text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          <Icon className="h-4 w-4" />
+        </button>
+      ))}
+    </div>
+  )
+}
+
 export function MatchesPage() {
   const [minScore, setMinScore] = useState(0)
   const [openJobId, setOpenJobId] = useState<number | null>(null)
+  // Persisted: a layout preference that resets on every visit is not a preference.
+  const [view, setView] = useState<ViewMode>(
+    () => (localStorage.getItem(VIEW_KEY) as ViewMode) || 'grid',
+  )
+
+  function changeView(next: ViewMode) {
+    setView(next)
+    localStorage.setItem(VIEW_KEY, next)
+  }
 
   const matches = useMatches(minScore || undefined)
   const applications = useApplications()
@@ -60,18 +101,21 @@ export function MatchesPage() {
               : 'Ranked roles from the latest pipeline run.'}
           </p>
         </div>
-        <Select value={String(minScore)} onValueChange={(v) => setMinScore(Number(v))}>
-          <SelectTrigger className="w-36">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {SCORE_FILTERS.map((f) => (
-              <SelectItem key={f.value} value={f.value}>
-                {f.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="flex items-center gap-2">
+          <Select value={String(minScore)} onValueChange={(v) => setMinScore(Number(v))}>
+            <SelectTrigger className="w-36">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {SCORE_FILTERS.map((f) => (
+                <SelectItem key={f.value} value={f.value}>
+                  {f.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <ViewToggle value={view} onChange={changeView} />
+        </div>
       </header>
 
       {matches.isLoading ? (
@@ -85,17 +129,32 @@ export function MatchesPage() {
           icon={<Sparkles className="h-5 w-5" />}
         />
       ) : (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {data.map((m, i) => (
-            <div key={m.job_id} className="reveal" style={{ animationDelay: `${i * 40}ms` }}>
-              <MatchCard
-                match={m}
-                tracked={trackedIds.has(m.job_id)}
-                onOpen={() => setOpenJobId(m.job_id)}
-                onTrack={() => handleTrack(m.job_id, m.title)}
-              />
+        <div className="reveal">
+          {view === 'grid' ? (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {data.map((m) => (
+                <MatchCard
+                  key={m.job_id}
+                  match={m}
+                  tracked={trackedIds.has(m.job_id)}
+                  onOpen={() => setOpenJobId(m.job_id)}
+                  onTrack={() => handleTrack(m.job_id, m.title)}
+                />
+              ))}
             </div>
-          ))}
+          ) : (
+            <div className="overflow-hidden rounded-xl border border-border bg-card/70">
+              {data.map((m) => (
+                <MatchRow
+                  key={m.job_id}
+                  match={m}
+                  tracked={trackedIds.has(m.job_id)}
+                  onOpen={() => setOpenJobId(m.job_id)}
+                  onTrack={() => handleTrack(m.job_id, m.title)}
+                />
+              ))}
+            </div>
+          )}
         </div>
       )}
 

@@ -89,7 +89,12 @@ class Run(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(String(20), default=RunStatus.RUNNING.value)
     source_counts_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    #: Fatal error that ended the run. Only ever set when status is FAILED.
     error_text: Mapped[str | None] = mapped_column(Text)
+    #: Per-source problems ({source: message}) that were isolated and skipped. A run
+    #: with these is still a SUCCESS — the other sources produced matches — so they
+    #: are kept apart from `error_text` rather than making a good run look broken.
+    source_errors_json: Mapped[dict] = mapped_column(JSON, default=dict)
 
     raw_jobs: Mapped[list[RawJob]] = relationship(back_populates="run")
     matches: Mapped[list[JobMatch]] = relationship(back_populates="run")
@@ -120,12 +125,26 @@ class Job(Base):
     title: Mapped[str] = mapped_column(String(500))
     company: Mapped[str] = mapped_column(String(300))
     location: Mapped[str | None] = mapped_column(String(300))
+    #: The thin summary synthesized from the search-result card. Rewritten every run.
     description: Mapped[str | None] = mapped_column(Text)
+    #: The real posting text, fetched from the job's detail page by the enrich stage.
+    #: Kept separate from `description` because `upsert_job` overwrites the latter on
+    #: every run — enrichment is expensive and must survive re-scraping.
+    detail_text: Mapped[str | None] = mapped_column(Text)
+    #: When the detail fetch last ran (success or give-up), so it is not retried daily.
+    detail_fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     skills_json: Mapped[list] = mapped_column(JSON, default=list)
     source: Mapped[str] = mapped_column(String(50), index=True)
     url: Mapped[str | None] = mapped_column(Text, index=True)
     content_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    #: The run that first saw this job — drives "new since last run" in the digest.
+    first_seen_run_id: Mapped[int | None] = mapped_column(Integer, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    @property
+    def effective_description(self) -> str | None:
+        """The best text available for ranking: the real posting, else the card."""
+        return self.detail_text or self.description
 
     matches: Mapped[list[JobMatch]] = relationship(back_populates="job")
     application: Mapped[Application | None] = relationship(back_populates="job")
@@ -207,6 +226,10 @@ class AppSettings(Base):
     linkedin_location: Mapped[str | None] = mapped_column(String(200))
     telegram_min_score: Mapped[int | None] = mapped_column(Integer)
     telegram_top_n: Mapped[int | None] = mapped_column(Integer)
+    llm_provider: Mapped[str | None] = mapped_column(String(50))
+    llm_base_url: Mapped[str | None] = mapped_column(String(500))
+    llm_api_key: Mapped[str | None] = mapped_column(String(500))
+    llm_model: Mapped[str | None] = mapped_column(String(200))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
     )
