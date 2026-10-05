@@ -39,7 +39,11 @@ def update_application(
     """Update an application's status and/or notes."""
     try:
         application = repo.update_application_status(
-            session, application_id, status=body.status, notes=body.notes
+            session,
+            application_id,
+            status=body.status,
+            notes=body.notes,
+            dismiss_reason=body.dismiss_reason,
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="application not found") from exc

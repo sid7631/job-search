@@ -82,6 +82,7 @@ def rank_run(
     session_scope: SessionScope | None = None,
     settings: Settings | None = None,
     llm: LLMCallable | None = None,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> RankingReport:
     """Rank a run's jobs, using and filling the content-hash cache.
 
@@ -143,7 +144,7 @@ def rank_run(
     # Phase 2 — call the LLM for misses, concurrency-limited (outside any session).
     misses = [it for it in items if not it.from_cache]
     if misses:
-        computed = _rank_misses(misses, settings, llm)
+        computed = _rank_misses(misses, settings, llm, on_progress)
         for it in misses:
             it.result = computed[it.job_id]
         report.llm_calls = len(misses)
@@ -178,7 +179,10 @@ def rank_run(
 
 
 def _rank_misses(
-    misses: list[_Item], settings: Settings, llm: LLMCallable | None
+    misses: list[_Item],
+    settings: Settings,
+    llm: LLMCallable | None,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> dict[int, RankingResult]:
     """Rank cache-miss jobs with a bounded thread pool; returns job_id -> result."""
     caller = llm or _default_caller(settings)
@@ -188,8 +192,13 @@ def _rank_misses(
         assert item.prompt is not None
         return item.job_id, _rank_one(item.prompt, caller)
 
+    results: dict[int, RankingResult] = {}
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        return dict(pool.map(work, misses))
+        for job_id, result in pool.map(work, misses):
+            results[job_id] = result
+            if on_progress is not None:
+                on_progress(len(results), len(misses))
+    return results
 
 
 def _default_caller(settings: Settings) -> LLMCallable:

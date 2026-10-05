@@ -47,6 +47,7 @@ def _to_out(s: Settings, derived: dict[str, str], auto: list[str]) -> SettingsOu
         llm_effective_base_url=s.llm_base_url or spec.base_url,
         llm_effective_model=s.llm_model or spec.default_model,
         llm_requires_key=spec.requires_key,
+        exclude_keywords=s.exclude_keywords,
         derived_from_resume=derived,
         auto_fields=auto,
     )

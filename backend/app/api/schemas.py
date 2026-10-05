@@ -8,6 +8,7 @@ flat shapes the React UI consumes.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, field_validator
 
@@ -123,6 +124,7 @@ class ApplicationOut(BaseModel):
     status: ApplicationStatus
     applied_at: datetime | None
     notes: str | None
+    dismiss_reason: str | None = None
     created_at: datetime
     updated_at: datetime
     job: JobSummary | None
@@ -136,6 +138,7 @@ class ApplicationOut(BaseModel):
             status=application.status,
             applied_at=application.applied_at,
             notes=application.notes,
+            dismiss_reason=application.dismiss_reason,
             created_at=application.created_at,
             updated_at=application.updated_at,
             job=(
@@ -159,6 +162,7 @@ class ApplicationUpdate(BaseModel):
 
     status: ApplicationStatus | None = None
     notes: str | None = None
+    dismiss_reason: str | None = None
 
 
 class RunOut(BaseModel):
@@ -174,6 +178,8 @@ class RunOut(BaseModel):
     #: {source: message} for sources that were skipped. The run can still be a
     #: SUCCESS — the UI shows these as warnings, not failures.
     source_errors: dict[str, str]
+    #: Live {stage, detail, attention, updated_at} while RUNNING.
+    progress: dict = {}
 
     @classmethod
     def from_run(cls, run: Run) -> RunOut:
@@ -185,6 +191,7 @@ class RunOut(BaseModel):
             source_counts=run.source_counts_json or {},
             error_text=run.error_text,
             source_errors=run.source_errors_json or {},
+            progress=run.progress_json or {},
         )
 
 
@@ -217,6 +224,7 @@ class SettingsOut(BaseModel):
     llm_effective_base_url: str
     llm_effective_model: str
     llm_requires_key: bool
+    exclude_keywords: str = ""
     #: Search terms the parsed résumé implies, keyed by setting name. The UI shows
     #: these as placeholders so it is obvious which fields are auto-filled.
     derived_from_resume: dict[str, str]
@@ -276,6 +284,7 @@ class SettingsUpdate(BaseModel):
     llm_base_url: str | None = None
     llm_model: str | None = None
     llm_api_key: str | None = None
+    exclude_keywords: str | None = None
 
     @field_validator("llm_provider")
     @classmethod
@@ -315,3 +324,50 @@ class ProfileOut(BaseModel):
             desired_roles=list(profile.desired_roles_json or []),
             updated_at=profile.updated_at,
         )
+
+
+class QueueEntryOut(BaseModel):
+    """One role in the triage queue, with near-identical postings collapsed in."""
+
+    match: MatchOut
+    similar: list[MatchOut]
+
+
+class QueueOut(BaseModel):
+    items: list[QueueEntryOut]
+    run_id: int | None
+    total_matches: int
+    triaged: int
+    excluded: int
+    #: {reason key: label} for the dismiss buttons.
+    dismiss_reasons: dict[str, str]
+
+
+class TriageIn(BaseModel):
+    job_id: int
+    action: Literal["save", "apply", "dismiss"]
+    reason: str | None = None
+    #: Collapsed duplicates that should follow this decision.
+    similar_ids: list[int] = []
+
+
+class TriageUndoIn(BaseModel):
+    job_ids: list[int]
+
+
+class CurrentRunOut(BaseModel):
+    """What the Today page needs about runs: the active one, else the last one."""
+
+    active: RunOut | None
+    last: RunOut | None
+
+
+class ScheduleOut(BaseModel):
+    supported: bool
+    enabled: bool
+    run_hour: int
+    timezone: str
+
+
+class ScheduleIn(BaseModel):
+    enabled: bool

@@ -256,6 +256,17 @@ def get_latest_run(session: Session) -> Run | None:
     return session.scalar(select(Run).order_by(Run.started_at.desc(), Run.id.desc()).limit(1))
 
 
+def get_latest_run_with_matches(session: Session) -> Run | None:
+    """The newest run that produced matches — skips a run still in progress."""
+    stmt = (
+        select(Run)
+        .where(Run.id.in_(select(JobMatch.run_id)))
+        .order_by(Run.started_at.desc(), Run.id.desc())
+        .limit(1)
+    )
+    return session.scalar(stmt)
+
+
 def get_run_for_date(session: Session, day: date) -> Run | None:
     """Return the most recent run that started on the given calendar day."""
     stmt = (
@@ -314,12 +325,21 @@ def _sync_applied_at(application: Application) -> None:
         application.applied_at = _utcnow()
 
 
+def _sync_dismiss_reason(application: Application, reason: str | None) -> None:
+    """A dismiss reason only means something on a DROPPED application."""
+    if application.status != ApplicationStatus.DROPPED:
+        application.dismiss_reason = None
+    elif reason is not None:
+        application.dismiss_reason = reason
+
+
 def create_application(
     session: Session,
     *,
     job_id: int,
     status: ApplicationStatus | str = ApplicationStatus.SAVED,
     notes: str | None = None,
+    dismiss_reason: str | None = None,
 ) -> Application:
     """Track a job (one application per job): create it, or update if it exists."""
     application = session.scalar(select(Application).where(Application.job_id == job_id))
@@ -330,6 +350,7 @@ def create_application(
     if notes is not None:
         application.notes = notes
     _sync_applied_at(application)
+    _sync_dismiss_reason(application, dismiss_reason)
     session.flush()
     return application
 
@@ -340,6 +361,7 @@ def update_application_status(
     *,
     status: ApplicationStatus | str | None = None,
     notes: str | None = None,
+    dismiss_reason: str | None = None,
 ) -> Application:
     """Update an application's status and/or notes."""
     application = session.get(Application, application_id)
@@ -348,6 +370,7 @@ def update_application_status(
     if status is not None:
         application.status = _as_application_status(status)
         _sync_applied_at(application)
+    _sync_dismiss_reason(application, dismiss_reason)
     if notes is not None:
         application.notes = notes
     session.flush()
@@ -418,6 +441,50 @@ def record_run_error(
         run.error_text = f"{run.error_text}\n{error_text}" if run.error_text else error_text
     session.flush()
     return run
+
+
+def set_run_progress(
+    session: Session,
+    run_id: int,
+    *,
+    stage: str | None = None,
+    detail: str | None = None,
+    attention: str | None = None,
+    clear_attention: bool = False,
+) -> Run:
+    """Update a running run's live progress. Only the given fields change."""
+    run = session.get(Run, run_id)
+    if run is None:
+        raise ValueError(f"run {run_id} not found")
+    progress = dict(run.progress_json or {})
+    if stage is not None:
+        progress["stage"] = stage
+        progress["detail"] = detail
+    elif detail is not None:
+        progress["detail"] = detail
+    if attention is not None:
+        progress["attention"] = attention
+    elif clear_attention:
+        progress.pop("attention", None)
+    progress["updated_at"] = _utcnow().isoformat()
+    run.progress_json = progress
+    session.flush()
+    return run
+
+
+def get_active_run(session: Session) -> Run | None:
+    """The newest run still RUNNING, if any."""
+    stmt = (
+        select(Run)
+        .where(Run.status == RunStatus.RUNNING.value)
+        .order_by(Run.started_at.desc(), Run.id.desc())
+        .limit(1)
+    )
+    return session.scalar(stmt)
+
+
+def get_application_for_job(session: Session, job_id: int) -> Application | None:
+    return session.scalar(select(Application).where(Application.job_id == job_id))
 
 
 def list_runs(session: Session, *, limit: int = 50) -> list[Run]:

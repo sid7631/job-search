@@ -85,6 +85,8 @@ class Settings(BaseSettings):
     prefilter_max_jobs: int = 50
     # Drop jobs scoring below this (0-100). 0 keeps everything the cap allows.
     prefilter_min_score: float = 0.0
+    # Comma-separated title terms that remove a job outright, e.g. "java, sap, intern".
+    exclude_keywords: str = ""
 
     # --- Semantic fit gate (local Ollama decision model; runs before ranking) ---
     # Asks a small decision model "is this a plausible fit?" per job and drops the

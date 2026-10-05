@@ -15,6 +15,7 @@ Settings page stays the single place that owns `RUN_HOUR`.
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -85,3 +86,38 @@ def install(
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(build_plist(working_dir=working_dir, python=python, log_dir=log_dir))
     return path
+
+
+# ------------------------------------------------------------- dashboard toggle
+
+BACKEND_DIR = Path(__file__).resolve().parents[2]
+
+
+def is_loaded() -> bool:
+    """Whether launchd currently has the agent loaded (i.e. the scheduler is live)."""
+    if sys.platform != "darwin":
+        return False
+    result = subprocess.run(
+        ["launchctl", "list", LABEL], capture_output=True, text=True, check=False
+    )
+    return result.returncode == 0
+
+
+def enable() -> Path:
+    """Install and load the agent — what the Settings page's schedule switch does."""
+    path = install(working_dir=BACKEND_DIR)
+    subprocess.run(["launchctl", "unload", str(path)], capture_output=True, check=False)
+    result = subprocess.run(
+        ["launchctl", "load", str(path)], capture_output=True, text=True, check=False
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"launchctl load failed: {result.stderr.strip() or result.stdout}")
+    return path
+
+
+def disable() -> None:
+    """Unload and remove the agent. Safe to call when it is not installed."""
+    path = agent_path()
+    if path.exists():
+        subprocess.run(["launchctl", "unload", str(path)], capture_output=True, check=False)
+        path.unlink()

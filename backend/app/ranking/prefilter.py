@@ -48,6 +48,8 @@ class PrefilterReport:
     considered: int = 0
     shortlisted: int = 0
     dropped: int = 0
+    #: Removed by the user's exclude list (a subset of `dropped`).
+    excluded: int = 0
 
     @property
     def as_dict(self) -> dict:
@@ -55,6 +57,7 @@ class PrefilterReport:
             "considered": self.considered,
             "shortlisted": self.shortlisted,
             "dropped": self.dropped,
+            "excluded": self.excluded,
         }
 
 
@@ -128,22 +131,46 @@ def score_job(profile: CandidateProfile, job: Job) -> PrefilterScore:
     )
 
 
+def parse_exclude_terms(raw: str | None) -> list[str]:
+    """Split the comma-separated exclude setting into lower-case terms."""
+    return [t.strip().lower() for t in (raw or "").split(",") if t.strip()]
+
+
+def is_excluded(title: str | None, terms: list[str]) -> bool:
+    """True when any exclude term appears in the title as a whole word/phrase.
+
+    Whole-word so "java" drops "Java Developer" but not "JavaScript Engineer".
+    """
+    if not terms:
+        return False
+    text = " ".join(_WORD_RE.findall((title or "").lower()))
+    padded = f" {text} "
+    return any(f" {' '.join(_WORD_RE.findall(term))} " in padded for term in terms)
+
+
 def shortlist(
     profile: CandidateProfile,
     jobs: list[Job],
     *,
     max_jobs: int,
     min_score: float,
+    exclude_terms: list[str] | None = None,
 ) -> tuple[list[Job], PrefilterReport]:
     """Return the jobs worth spending an LLM call on, best cheap-score first.
 
     `max_jobs <= 0` disables the cap; `min_score <= 0` disables the threshold. With
     both disabled the pre-filter is a no-op pass-through (but still ordered), which
-    is the escape hatch if it ever hides something it should not.
+    is the escape hatch if it ever hides something it should not. `exclude_terms`
+    is the user's explicit "never show me" list and always applies.
     """
     report = PrefilterReport(considered=len(jobs))
     if not jobs:
         return [], report
+
+    if exclude_terms:
+        kept = [job for job in jobs if not is_excluded(job.title, exclude_terms)]
+        report.excluded = len(jobs) - len(kept)
+        jobs = kept
 
     scored = sorted((score_job(profile, job) for job in jobs), key=lambda s: s.score, reverse=True)
     if min_score > 0:

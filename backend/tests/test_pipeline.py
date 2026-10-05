@@ -57,6 +57,7 @@ def _settings(**kw) -> Settings:
         llm_api_key="k",
         ranking_max_concurrency=2,
         dedupe_fuzzy_threshold=90.0,
+        semantic_filter_enabled=False,
     )
     base.update(kw)
     return Settings(**base)
@@ -162,7 +163,8 @@ def test_semantic_filter_gates_ranking_when_enabled(scope):
 def test_semantic_filter_off_by_default(scope):
     with scope() as s:
         _seed_profile(s)
-    settings = _settings()
+    # Explicit: `Settings()` also reads a developer's local `.env`.
+    settings = _settings(semantic_filter_enabled=False)
     collector = StubNaukri(_payloads(2), session_scope=scope, settings=settings)
 
     def scorer(state):

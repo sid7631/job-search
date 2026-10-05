@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from sqlalchemy.orm import Session
 
 from app.database import repository as repo
-from app.database.models import ApplicationStatus
+from app.database.models import DISMISS_REASONS, ApplicationStatus
 
 # Your actions, split by what they say about the *job*, not about the outcome.
 _POSITIVE = (ApplicationStatus.APPLIED, ApplicationStatus.INTERVIEWING, ApplicationStatus.OFFER)
@@ -68,7 +68,12 @@ def load_feedback(session: Session, *, limit: int = 8) -> Feedback:
         )
         if bucket is None or len(bucket) >= limit:
             continue
+        # A duplicate was dismissed because you acted on its twin, not on taste.
+        if application.dismiss_reason == "duplicate":
+            continue
         label = _label(application)
+        if label and application.dismiss_reason in DISMISS_REASONS:
+            label = f"{label} (reason: {DISMISS_REASONS[application.dismiss_reason]})"
         if label and label not in bucket:
             bucket.append(label)
     return feedback

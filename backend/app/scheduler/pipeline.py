@@ -28,7 +28,7 @@ from app.database import connection
 from app.database import repository as repo
 from app.database.models import Job, RunStatus
 from app.normalizer.normalizer import DedupeReport, normalize_and_dedupe
-from app.ranking.prefilter import PrefilterReport, shortlist
+from app.ranking.prefilter import PrefilterReport, parse_exclude_terms, shortlist
 from app.ranking.ranking_service import RankingReport, rank_run
 from app.ranking.semantic_filter import (
     FitScorer,
@@ -125,6 +125,7 @@ def _shortlist(
             jobs,
             max_jobs=settings.prefilter_max_jobs,
             min_score=settings.prefilter_min_score,
+            exclude_terms=parse_exclude_terms(settings.exclude_keywords),
         )
         for job in keep:
             session.expunge(job)
@@ -224,10 +225,19 @@ def run_pipeline(
         with session_scope() as session:
             run_id = repo.start_run(session).id
 
+    def progress(stage: str, detail: str | None = None) -> None:
+        """Publish the live stage for the dashboard. Never allowed to break a run."""
+        try:
+            with session_scope() as session:
+                repo.set_run_progress(session, run_id, stage=stage, detail=detail)
+        except Exception:  # noqa: BLE001
+            logger.debug("could not record run progress", exc_info=True)
+
     try:
         # Stage 1 — collect (each source isolated; one failure is skipped, not fatal).
         collected: dict[str, int] = {}
         for collector in collectors:
+            progress("collect", f"Collecting from {collector.source}")
             saved = safe_collect(collector, run_id)
             collected[collector.source] = collected.get(collector.source, 0) + len(saved)
 
@@ -236,6 +246,7 @@ def run_pipeline(
         dead_sources = [name for name, count in collected.items() if count == 0]
 
         # Stage 2 — normalize + dedup.
+        progress("dedupe", f"{sum(collected.values())} postings collected; removing duplicates")
         dedupe = normalize_and_dedupe(
             run_id,
             session_scope=session_scope,
@@ -245,12 +256,14 @@ def run_pipeline(
 
         # Stage 3 — cheap deterministic shortlist, so the LLM budget is spent on
         # plausible roles and the enrich stage only opens pages worth opening.
+        progress("shortlist", f"{len(dedupe.job_ids)} unique jobs; shortlisting")
         shortlist_jobs, prefilter_report = _shortlist(
             dedupe.job_ids, session_scope=session_scope, settings=settings
         )
 
         # Stage 4 — fetch the real posting text for the shortlist. Best-effort: a
         # failure here degrades ranking quality, it never fails the run.
+        progress("enrich", f"Reading full postings for {len(shortlist_jobs)} shortlisted jobs")
         enrich_report = _enrich(
             shortlist_jobs,
             session_scope=session_scope,
@@ -260,6 +273,8 @@ def run_pipeline(
 
         # Stage 5 — optional semantic gate: a local decision model drops the clear
         # mismatches the keyword shortlist let through. Fails open (keeps the job).
+        if settings.semantic_filter_enabled:
+            progress("gate", f"Checking fit of {len(shortlist_jobs)} jobs with a local model")
         rank_ids, semantic_report = _semantic_filter(
             shortlist_jobs,
             session_scope=session_scope,
@@ -270,12 +285,14 @@ def run_pipeline(
         # Stage 6 — rank the shortlist (cached; LLM score is the match score). We pass
         # job ids explicitly because jobs aren't linked to a run by URL (sources like
         # Naukri's current UI expose no per-card URL).
+        progress("rank", f"Scoring {len(rank_ids)} jobs against your résumé")
         ranking = rank_run(
             run_id,
             job_ids=rank_ids,
             session_scope=session_scope,
             settings=settings,
             llm=llm,
+            on_progress=lambda done, total: progress("rank", f"Scored {done} of {total} new jobs"),
         )
 
         counts = {

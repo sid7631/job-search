@@ -36,6 +36,7 @@ from app.collectors.base import (
 )
 from app.config import Settings, get_settings
 from app.database import connection
+from app.database import repository as repo
 from app.database.models import RawJob
 
 logger = logging.getLogger(__name__)
@@ -119,11 +120,13 @@ class LinkedInCollector(Collector):
         self._settings = settings or get_settings()
         self._session_scope: SessionScope = session_scope or connection.session_scope
         self._alert = alert or _default_reauth_alert(self._settings)
+        self._run_id: int | None = None
 
     # ------------------------------------------------------------------ public API
 
     def collect(self, run_id: int) -> list[RawJob]:
         """Scrape LinkedIn and persist; on a dead session, alert and return empty."""
+        self._run_id = run_id
         try:
             payloads = self._fetch_raw_jobs()
         except SessionError as exc:
@@ -328,16 +331,35 @@ class LinkedInCollector(Collector):
             wait_seconds,
         )
         self._notify_approval_needed(wait_seconds)
+        self._set_attention(
+            f"Approve the LinkedIn sign-in prompt on your phone "
+            f"(waiting up to {max(1, wait_seconds // 60)} min)."
+        )
 
-        deadline = time.monotonic() + wait_seconds
-        while time.monotonic() < deadline:
-            page.wait_for_timeout(3000)
-            if self._is_dead_session(page):
-                continue
-            if page.query_selector(_LOGGED_IN_MARKER):
-                logger.info("linkedin: checkpoint approved; continuing")
-                return True
-        return False
+        try:
+            deadline = time.monotonic() + wait_seconds
+            while time.monotonic() < deadline:
+                page.wait_for_timeout(3000)
+                if self._is_dead_session(page):
+                    continue
+                if page.query_selector(_LOGGED_IN_MARKER):
+                    logger.info("linkedin: checkpoint approved; continuing")
+                    return True
+            return False
+        finally:
+            self._set_attention(None)
+
+    def _set_attention(self, message: str | None) -> None:
+        """Show (or clear) a needs-you banner on the dashboard for this run."""
+        if self._run_id is None:
+            return
+        try:
+            with self._session_scope() as session:
+                repo.set_run_progress(
+                    session, self._run_id, attention=message, clear_attention=message is None
+                )
+        except Exception:  # noqa: BLE001 - a banner must never break the scrape
+            logger.debug("linkedin: could not update run attention", exc_info=True)
 
     def _notify_approval_needed(self, wait_seconds: int) -> None:
         """Ping Telegram so the prompt is noticed while the run is still waiting."""

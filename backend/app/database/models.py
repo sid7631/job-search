@@ -51,6 +51,20 @@ class ApplicationStatus(enum.StrEnum):
     DROPPED = "DROPPED"
 
 
+#: Why a job was passed on in triage -> the phrase the ranker sees.
+#: "duplicate" is bookkeeping (a near-identical posting you already acted on), not
+#: taste, so it is never fed back to the ranker.
+DISMISS_REASONS: dict[str, str] = {
+    "wrong_stack": "wrong tech stack",
+    "too_junior": "too junior",
+    "too_senior": "too senior",
+    "location": "wrong location",
+    "company": "not interested in the company",
+    "other": "not a fit",
+    "duplicate": "duplicate posting",
+}
+
+
 class RunStatus(enum.StrEnum):
     """Lifecycle of a pipeline run. Stored as a plain string on `runs.status`."""
 
@@ -95,6 +109,9 @@ class Run(Base):
     #: with these is still a SUCCESS — the other sources produced matches — so they
     #: are kept apart from `error_text` rather than making a good run look broken.
     source_errors_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    #: Live state of a RUNNING run for the dashboard: {stage, detail, attention,
+    #: updated_at}. `attention` is set while the run is blocked on the user.
+    progress_json: Mapped[dict] = mapped_column(JSON, default=dict)
 
     raw_jobs: Mapped[list[RawJob]] = relationship(back_populates="run")
     matches: Mapped[list[JobMatch]] = relationship(back_populates="run")
@@ -184,6 +201,8 @@ class Application(Base):
     )
     applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     notes: Mapped[str | None] = mapped_column(Text)
+    #: Why a DROPPED job was passed on (see `DISMISS_REASONS`). Null otherwise.
+    dismiss_reason: Mapped[str | None] = mapped_column(String(50))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
@@ -230,6 +249,7 @@ class AppSettings(Base):
     llm_base_url: Mapped[str | None] = mapped_column(String(500))
     llm_api_key: Mapped[str | None] = mapped_column(String(500))
     llm_model: Mapped[str | None] = mapped_column(String(200))
+    exclude_keywords: Mapped[str | None] = mapped_column(String(1000))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
     )

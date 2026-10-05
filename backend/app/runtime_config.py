@@ -36,6 +36,7 @@ OVERRIDE_FIELDS: tuple[str, ...] = (
     "llm_base_url",
     "llm_api_key",
     "llm_model",
+    "exclude_keywords",
 )
 
 # Fields the résumé can fill in when nothing else has set them.
