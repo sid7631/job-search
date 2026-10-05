@@ -60,6 +60,13 @@ matching that shortlists jobs worth an LLM call, and **enrich** then opens the r
 pages for that shortlist only (search cards carry almost no text). `PREFILTER_MAX_JOBS`
 is therefore the main cost dial — it caps how many jobs reach the model per run.
 
+Optionally, a **semantic gate** sits between enrich and rank: a small local Ollama
+*decision* model (`tev1:4b`, via Ollama's `/v1/systemone` endpoint, Ollama >= 0.35)
+answers "is this a plausible fit?" per job and drops clear mismatches before the full
+ranking call. It is off by default (`SEMANTIC_FILTER_ENABLED=true` to turn it on, after
+`ollama pull tev1:4b`), never affects the match score, and keeps every job if Ollama is
+unreachable. Dropped jobs and their fit probabilities are listed in the run's counts.
+
 ---
 
 ## Example flow (first run, start to finish)
@@ -212,6 +219,9 @@ Copy `backend/.env.example`, which lists every key. The ones that matter most:
 | `LINKEDIN_EMAIL` / `LINKEDIN_PASSWORD` | LinkedIn login (optional second source) |
 | `PREFILTER_MAX_JOBS` | cap on jobs sent to the LLM per run (default 50; 0 = no cap) |
 | `PREFILTER_MIN_SCORE` | drop jobs below this cheap relevance score before ranking (default 0 = keep all) |
+| `SEMANTIC_FILTER_ENABLED` | local decision-model fit gate before ranking (default false; needs Ollama >= 0.35 + `ollama pull tev1:4b`) |
+| `SEMANTIC_FILTER_MODEL` / `SEMANTIC_FILTER_BASE_URL` | decision model and Ollama URL (default `tev1:4b`, `http://localhost:11434`) |
+| `SEMANTIC_FILTER_MIN_FIT` | drop jobs whose fit probability is below this, 0-1 (default 0.1) |
 | `ENRICH_ENABLED` / `ENRICH_MAX_JOBS` | open the real job pages before ranking (default on, 30) |
 | `FEEDBACK_ENABLED` | feed your own tracking decisions into the ranker — applied/interviewing/offer as positives, dropped as negatives (default true; `REJECTED` is the company's call, so it's ignored) |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | optional daily digest (your *numeric* chat id) |

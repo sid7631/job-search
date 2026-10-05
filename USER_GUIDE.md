@@ -235,6 +235,11 @@ Once set, every successful run pushes the top picks; failed runs send an alert.
   pre-filter is cheap string matching that shortlists jobs worth an LLM call; enrich
   then opens the real job pages for that shortlist (search cards carry almost no
   text). Only the shortlist is scored, so `PREFILTER_MAX_JOBS` is your main cost dial.
+- **Optional semantic gate (local Ollama only).** Set `SEMANTIC_FILTER_ENABLED=true`
+  (after `ollama pull tev1:4b`) and a small decision model drops obvious mismatches
+  between enrich and rank — roughly a second per job versus a full ranking call. Check
+  `semantic_filter.dropped_jobs` in the run's counts before raising
+  `SEMANTIC_FILTER_MIN_FIT` above its cautious 0.1 default.
 - **Keep it running across sleep/reboot**: `uv run python -m app.main install-schedule`
   writes a macOS LaunchAgent that restarts the scheduler at login and after a crash. It
   does *not* activate it for you — it prints a `launchctl unload …; launchctl load …`

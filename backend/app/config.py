@@ -86,6 +86,16 @@ class Settings(BaseSettings):
     # Drop jobs scoring below this (0-100). 0 keeps everything the cap allows.
     prefilter_min_score: float = 0.0
 
+    # --- Semantic fit gate (local Ollama decision model; runs before ranking) ---
+    # Asks a small decision model "is this a plausible fit?" per job and drops the
+    # clear misses. Needs Ollama >= 0.35 and the model pulled. Fails open.
+    semantic_filter_enabled: bool = False
+    semantic_filter_base_url: str = "http://localhost:11434"
+    semantic_filter_model: str = "tev1:4b"
+    # Drop jobs whose fit probability is below this (0-1). Keep it low: this gate
+    # removes obvious mismatches, the ranker picks winners.
+    semantic_filter_min_fit: float = 0.1
+
     # --- Detail enrichment (fetch the real posting before ranking) ---
     enrich_enabled: bool = True
     # Cap on detail pages opened per run — each is a real page load with a delay.

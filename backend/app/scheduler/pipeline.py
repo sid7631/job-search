@@ -30,6 +30,12 @@ from app.database.models import Job, RunStatus
 from app.normalizer.normalizer import DedupeReport, normalize_and_dedupe
 from app.ranking.prefilter import PrefilterReport, shortlist
 from app.ranking.ranking_service import RankingReport, rank_run
+from app.ranking.semantic_filter import (
+    FitScorer,
+    OllamaDecisionClient,
+    SemanticFilterReport,
+    semantic_filter,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +76,7 @@ class PipelineResult:
     dedupe: DedupeReport | None = None
     prefilter: PrefilterReport | None = None
     enrich: EnrichReport | None = None
+    semantic: SemanticFilterReport | None = None
     ranking: RankingReport | None = None
     error: str | None = None
 
@@ -136,6 +143,48 @@ def _enrich(
     return enrich_jobs(jobs, fetchers=fetchers, session_scope=session_scope, settings=settings)
 
 
+def _semantic_filter(
+    jobs: list[Job],
+    *,
+    session_scope: SessionScope,
+    settings: Settings,
+    fit_scorer: FitScorer | None,
+) -> tuple[list[int], SemanticFilterReport | None]:
+    """Drop clear mismatches with a local decision model. Returns kept job ids.
+
+    Jobs are reloaded so the gate reads the description the enrich stage just
+    stored (the shortlist objects are detached and predate it). Disabled -> no-op.
+    """
+    job_ids = [job.id for job in jobs]
+    if not settings.semantic_filter_enabled or not job_ids:
+        return job_ids, None
+
+    with session_scope() as session:
+        profile = repo.get_candidate_profile(session)
+        fresh = repo.get_jobs_by_ids(session, job_ids)
+        for job in fresh:
+            session.expunge(job)
+        if profile is not None:
+            session.expunge(profile)
+    if profile is None:
+        return job_ids, None
+
+    client = None
+    if fit_scorer is None:
+        client = OllamaDecisionClient(
+            settings.semantic_filter_base_url, settings.semantic_filter_model
+        )
+        fit_scorer = client
+    try:
+        keep, report = semantic_filter(
+            profile, fresh, scorer=fit_scorer, min_fit=settings.semantic_filter_min_fit
+        )
+    finally:
+        if client is not None:
+            client.close()
+    return [job.id for job in keep], report
+
+
 def _safe_notify(fn: Callable[..., None], *args) -> None:
     """A notifier failure must never undo a successful run."""
     try:
@@ -153,6 +202,7 @@ def run_pipeline(
     notifier: Notifier | None = None,
     llm: Callable[..., dict] | None = None,
     skill_extractor: Callable[[str], list[str]] | None = None,
+    fit_scorer: FitScorer | None = None,
 ) -> PipelineResult:
     """Run the full daily pipeline once, wrapped in run-tracking.
 
@@ -208,12 +258,21 @@ def run_pipeline(
             collectors=collectors,
         )
 
-        # Stage 5 — rank the shortlist (cached; LLM score is the match score). We pass
+        # Stage 5 — optional semantic gate: a local decision model drops the clear
+        # mismatches the keyword shortlist let through. Fails open (keeps the job).
+        rank_ids, semantic_report = _semantic_filter(
+            shortlist_jobs,
+            session_scope=session_scope,
+            settings=settings,
+            fit_scorer=fit_scorer,
+        )
+
+        # Stage 6 — rank the shortlist (cached; LLM score is the match score). We pass
         # job ids explicitly because jobs aren't linked to a run by URL (sources like
         # Naukri's current UI expose no per-card URL).
         ranking = rank_run(
             run_id,
-            job_ids=[job.id for job in shortlist_jobs],
+            job_ids=rank_ids,
             session_scope=session_scope,
             settings=settings,
             llm=llm,
@@ -230,6 +289,8 @@ def run_pipeline(
             "cache_hits": ranking.cache_hits,
             "llm_calls": ranking.llm_calls,
         }
+        if semantic_report is not None:
+            counts["semantic_filter"] = semantic_report.as_dict
         if dead_sources:
             counts["sources_with_no_jobs"] = dead_sources
 
@@ -243,7 +304,7 @@ def run_pipeline(
         _safe_notify(notifier.notify_failure, run_id, error)
         return PipelineResult(run_id=run_id, status=RunStatus.FAILED.value, error=error)
 
-    # Stage 6 — notify (outside the try: a notify error must not flip the run to FAILED).
+    # Stage 7 — notify (outside the try: a notify error must not flip the run to FAILED).
     warn = getattr(notifier, "notify_source_warning", None)
     if dead_sources and warn is not None:
         _safe_notify(warn, run_id, dead_sources)
@@ -256,5 +317,6 @@ def run_pipeline(
         dedupe=dedupe,
         prefilter=prefilter_report,
         enrich=enrich_report,
+        semantic=semantic_report,
         ranking=ranking,
     )

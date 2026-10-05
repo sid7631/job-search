@@ -133,6 +133,54 @@ def test_run_pipeline_end_to_end(scope):
         assert len(repo.get_today_matches(s, run_id=result.run_id)) == 3
 
 
+def test_semantic_filter_gates_ranking_when_enabled(scope):
+    with scope() as s:
+        _seed_profile(s)
+    settings = _settings(semantic_filter_enabled=True, semantic_filter_min_fit=0.5)
+    llm = CountingLLM()
+    collector = StubNaukri(_payloads(3), session_scope=scope, settings=settings)
+
+    def scorer(state):
+        return 0.9 if "Backend" in state["job"] else 0.05
+
+    result = run_pipeline(
+        session_scope=scope,
+        settings=settings,
+        collectors=[collector],
+        notifier=SpyNotifier(),
+        llm=llm,
+        fit_scorer=scorer,
+    )
+
+    assert result.status == "SUCCESS"
+    assert llm.calls == 1
+    assert result.source_counts["matches_written"] == 1
+    gate = result.source_counts["semantic_filter"]
+    assert (gate["considered"], gate["kept"], gate["dropped"]) == (3, 1, 2)
+
+
+def test_semantic_filter_off_by_default(scope):
+    with scope() as s:
+        _seed_profile(s)
+    settings = _settings()
+    collector = StubNaukri(_payloads(2), session_scope=scope, settings=settings)
+
+    def scorer(state):
+        raise AssertionError("gate must not run when disabled")
+
+    result = run_pipeline(
+        session_scope=scope,
+        settings=settings,
+        collectors=[collector],
+        notifier=SpyNotifier(),
+        llm=CountingLLM(),
+        fit_scorer=scorer,
+    )
+
+    assert result.source_counts["matches_written"] == 2
+    assert "semantic_filter" not in result.source_counts
+
+
 def test_failing_collector_is_isolated_not_fatal(scope):
     with scope() as s:
         _seed_profile(s)
