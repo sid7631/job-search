@@ -12,32 +12,17 @@ pushes the top picks to Telegram, and gives you a dashboard to triage and track.
 
 ---
 
-## ⚡ TL;DR — the commands you'll use
+## ⚡ TL;DR
 
 ```bash
 cd ~/Documents/github/job_search
-
-# start the API + dashboard (leave these running)
-( cd backend  && uv run python -m app.main serve-api --port 8000 ) &
-( cd frontend && npm run dev ) &                       # dashboard → http://localhost:5173
-
-# run a scrape+rank now (Chrome windows open — Naukri, then LinkedIn)
-cd backend && uv run python -m app.main run-pipeline
-
-# …or run it automatically every day at RUN_HOUR:
-cd backend && uv run python -m app.main start-scheduler
-
-# keep the scheduler alive across reboots (macOS LaunchAgent). This *writes* the
-# plist and prints a `launchctl load …` line — run that line to actually start it:
-cd backend && uv run python -m app.main install-schedule
-
-# if the Mac was asleep at RUN_HOUR, catch up now:
-cd backend && uv run python -m app.main catch-up
+./jobhunter            # sets up anything missing, then opens http://localhost:8000
 ```
 
-Open **http://localhost:5173**. Done. From the dashboard you can **upload a résumé**
-(Profile page) and **run a scrape** (the **Run** button in the header) — no CLI needed
-for day-to-day use. The CLI commands below are equivalents / fallbacks.
+First launch opens a setup wizard (AI model → résumé → search terms → first run). After
+that, everything is in the app: **Today** to triage new roles with the keyboard,
+**Applications** to track them, **Settings → Daily run** to schedule it. The CLI
+commands below are equivalents and fallbacks; `./jobhunter help` lists the shortcuts.
 
 ---
 

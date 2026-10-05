@@ -226,11 +226,7 @@ def application_stats() -> dict[str, Any]:
             "responses": len(responded),
             "response_rate": round(len(responded) / len(sent), 2) if sent else None,
             "interviews_by_source": dict(
-                Counter(
-                    a.job.source
-                    for a in apps
-                    if a.job and a.status in engaged
-                )
+                Counter(a.job.source for a in apps if a.job and a.status in engaged)
             ),
             "pass_reasons": dict(reasons.most_common()),
             "awaiting_reply": [

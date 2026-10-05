@@ -69,56 +69,56 @@ unreachable. Dropped jobs and their fit probabilities are listed in the run's co
 
 ---
 
-## Example flow (first run, start to finish)
+## Quick start
 
-This is the whole thing, native on your Mac. (Native, not Docker — see
-[Why native?](#why-native-not-docker) below.)
-
-```bash
-cd ~/Documents/github/job_search
-
-# 1. One-time setup: deps, the headed browser, and the local database
-cd backend
-uv sync
-uv run playwright install chromium
-uv run alembic upgrade head
-
-# 2. Configure: copy the template and fill in your secrets + search
-cp .env.example .env
-#    edit .env → LLM_PROVIDER / LLM_API_KEY, NAUKRI_*, LINKEDIN_* (optional), TELEGRAM_* (optional),
-#    NAUKRI_KEYWORDS / NAUKRI_LOCATION / NAUKRI_EXPERIENCE, and keep COLLECTOR_HEADLESS=false
-
-# 3. Teach it who you are: parse your résumé into the profile (one time)
-uv run python -m app.main parse-resume --path ~/Downloads/resume.pdf
-
-# 4. Start the dashboard backend + frontend (leave these two running)
-uv run python -m app.main serve-api --port 8000 &      # JSON API on :8000
-cd ../frontend && npm install && npm run dev &          # dashboard on :5173
-
-# 5. Run a scrape+rank now. A real Chrome window opens (Naukri, then LinkedIn),
-#    scrapes, dedups, and ranks against your résumé.
-cd ../backend && uv run python -m app.main run-pipeline
-```
-
-Then open **http://localhost:5173**:
-
-1. **Matches** — today's jobs as cards, each with a 0–100 score badge and the LLM's
-   pros/cons. Filter by minimum score; click a card for the full reasoning.
-2. **Track** the ones worth pursuing → they move to your **Pipeline** board
-   (Saved → Applied → Interviewing → Offer / Rejected).
-3. **Runs** — history of every run, with counts and any errors, plus a **Run now** button.
-4. **Profile / Settings** — re-upload your résumé, or change keywords / location /
-   accounts without touching the CLI.
-
-After the first run, day-to-day you don't need the CLI at all: hit **Run** in the
-dashboard header, or let the scheduler do it automatically (step below).
-
-**Run it automatically every day** at `RUN_HOUR` (default 08:00 Asia/Kolkata) — keep
-this running in its own terminal tab:
+You need [uv](https://docs.astral.sh/uv/) and Node.js 20+. Then:
 
 ```bash
-cd backend && uv run python -m app.main start-scheduler
+./jobhunter
 ```
+
+That one command installs anything missing (Python deps, the scraper's browser, the
+database, the dashboard), builds the dashboard and opens **http://localhost:8000**. Re-run
+it any time; finished steps are skipped. (Native, not Docker — see
+[Why native?](#why-native-not-docker).)
+
+The first time, a **setup wizard** walks you through it: pick an AI model → upload your
+résumé → check the search terms it suggests → find your first jobs.
+
+Day to day:
+
+1. **Today** — your queue. One role at a time, best fit first, with the AI's reason,
+   pros and cons. Near-identical postings from the same company are grouped. Press
+   **A** apply (opens the posting, then asks if you applied), **S** save, **X** not for
+   me (pick a reason — it teaches the ranker), **J/K** to move, **Z** to undo. While a
+   run is going you see each stage live, plus a banner when it needs you (e.g. approve
+   the LinkedIn sign-in on your phone).
+2. **Applications** — Saved → Applied → Interviewing → Offer, with a nudge on anything
+   that has waited a week for a reply. Rejected and passed-on jobs fold away.
+3. **Profile** — your résumé, what to search for, and a **never show** list of title
+   words (“java, sap”) that hides jobs before they're ranked.
+4. **Settings** — turn on the **daily run** (one switch; it starts at login and catches
+   up after sleep), pick the AI provider, add your LinkedIn account.
+
+Other modes: `./jobhunter dev` (hot-reloading frontend on :5173), `./jobhunter run`
+(one pipeline run in the terminal), `./jobhunter mcp` (Claude Desktop config).
+
+## Using it with Claude
+
+`backend/app/mcp_server.py` is an MCP server over the same local database, and
+`.claude/skills/job-hunter` teaches Claude the workflows. Open this folder in Claude Code
+(it reads `.mcp.json`) or add the server to Claude Desktop (`./jobhunter mcp` prints the
+config), then ask:
+
+- **“Check my job emails and update my applications.”** Claude reads Gmail through its
+  own Gmail connector — no Google Cloud project or API keys here — matches each
+  confirmation, interview invite or rejection to an application, shows you the proposed
+  changes, and applies the ones you approve with a dated note. Works well as a daily
+  scheduled task in the Claude desktop app.
+- **“Prep me for the Razorpay interview.”** Talking points, gaps and likely questions
+  from the full posting and your résumé.
+- **“How is my job search going?”** Response rate, what's waiting, why you pass on
+  roles, and what to change in your search.
 
 > 📖 **The full walkthrough — setup, Telegram, the dashboard, troubleshooting — lives in
 > [`USER_GUIDE.md`](./USER_GUIDE.md).** Read that next; this README is the overview.
