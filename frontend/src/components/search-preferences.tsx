@@ -56,8 +56,8 @@ function Form({ current }: { current: AppSettings }) {
             <Search className="h-4 w-4 text-primary" /> What to search for
           </h2>
           <p className="mt-1 text-xs text-muted-foreground">
-            Blank fields follow your résumé. Several keyword phrases, comma-separated, widen the
-            search (“python full stack, react node”).
+            Blank fields follow your résumé. Each source runs one search per run, so use a single
+            focused phrase (“python full stack developer”).
           </p>
         </div>
         <Button size="sm" onClick={onSave} disabled={save.isPending}>
