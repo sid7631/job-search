@@ -11,3 +11,7 @@
 
 # Local tool state
 .heapcode/
+
+# Claude Code per-machine state (skills and .mcp.json are shared and committed)
+.claude/launch.json
+.claude/settings.local.json

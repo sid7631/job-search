@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "job-hunter": {
+      "command": "uv",
+      "args": ["--directory", "backend", "run", "python", "-m", "app.mcp_server"]
+    }
+  }
+}
