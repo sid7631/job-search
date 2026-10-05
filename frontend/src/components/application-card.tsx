@@ -1,4 +1,4 @@
-import { Clock, ExternalLink } from 'lucide-react'
+import { BellRing, Clock, ExternalLink } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
 
@@ -15,6 +15,17 @@ import { APPLICATION_STATUSES, type Application, type ApplicationStatus } from '
 import { formatDate, statusMeta } from '@/lib/format'
 import { useUpdateApplication } from '@/lib/queries'
 
+// Mirrors DISMISS_REASONS on the backend; the queue endpoint serves the live list.
+const DISMISS_LABELS: Record<string, string> = {
+  wrong_stack: 'wrong tech stack',
+  too_junior: 'too junior',
+  too_senior: 'too senior',
+  location: 'wrong location',
+  company: 'not interested in the company',
+  other: 'not a fit',
+  duplicate: 'duplicate posting',
+}
+
 function StatusDot({ status }: { status: ApplicationStatus }) {
   return (
     <span
@@ -24,7 +35,13 @@ function StatusDot({ status }: { status: ApplicationStatus }) {
   )
 }
 
-export function ApplicationCard({ app }: { app: Application }) {
+export function ApplicationCard({
+  app,
+  needsFollowUp = false,
+}: {
+  app: Application
+  needsFollowUp?: boolean
+}) {
   const update = useUpdateApplication()
   const [notes, setNotes] = useState(app.notes ?? '')
   const dirty = notes !== (app.notes ?? '')
@@ -115,6 +132,16 @@ export function ApplicationCard({ app }: { app: Application }) {
       {app.applied_at && (
         <p className="mt-3 flex items-center gap-1 text-[0.7rem] text-muted-foreground">
           <Clock className="h-3 w-3" /> Applied {formatDate(app.applied_at)}
+        </p>
+      )}
+      {needsFollowUp && (
+        <p className="mt-2 flex items-center gap-1 rounded-md bg-amber-500/10 px-2 py-1 text-[0.7rem] text-amber-300">
+          <BellRing className="h-3 w-3" /> No reply in a week — worth a follow-up
+        </p>
+      )}
+      {app.status === 'DROPPED' && app.dismiss_reason && (
+        <p className="mt-2 text-[0.7rem] text-muted-foreground">
+          Passed: {DISMISS_LABELS[app.dismiss_reason] ?? app.dismiss_reason}
         </p>
       )}
     </div>

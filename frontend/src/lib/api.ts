@@ -53,6 +53,8 @@ export interface Application {
   status: ApplicationStatus
   applied_at: string | null
   notes: string | null
+  /** Why a DROPPED job was passed on ("wrong_stack", "duplicate", ...). */
+  dismiss_reason: string | null
   created_at: string
   updated_at: string
   job: JobSummary | null
@@ -67,6 +69,44 @@ export interface Run {
   error_text: string | null
   /** {source: message} for sources that were skipped; the run can still be a SUCCESS. */
   source_errors: Record<string, string>
+  /** Live state while RUNNING. `attention` is set when the run is waiting on you. */
+  progress: RunProgress
+}
+
+export interface RunProgress {
+  stage?: string
+  detail?: string | null
+  attention?: string
+  updated_at?: string
+}
+
+export interface CurrentRun {
+  active: Run | null
+  last: Run | null
+}
+
+export interface QueueEntry {
+  match: Match
+  /** Near-identical postings at the same company, collapsed into this entry. */
+  similar: Match[]
+}
+
+export interface Queue {
+  items: QueueEntry[]
+  run_id: number | null
+  total_matches: number
+  triaged: number
+  excluded: number
+  dismiss_reasons: Record<string, string>
+}
+
+export type TriageAction = 'save' | 'apply' | 'dismiss'
+
+export interface Schedule {
+  supported: boolean
+  enabled: boolean
+  run_hour: number
+  timezone: string
 }
 
 export interface Profile {
@@ -124,6 +164,8 @@ export interface AppSettings {
   llm_effective_base_url: string
   llm_effective_model: string
   llm_requires_key: boolean
+  /** Comma-separated title terms that hide a job ("java, sap"). */
+  exclude_keywords: string
   /** Search terms implied by the parsed resume, keyed by setting name. */
   derived_from_resume: Record<string, string>
   /** Fields currently coming from the resume rather than an explicit value. */
@@ -146,6 +188,7 @@ export type AppSettingsUpdate = Partial<{
   llm_base_url: string
   llm_model: string
   llm_api_key: string
+  exclude_keywords: string
 }>
 
 export class ApiError extends Error {
@@ -217,6 +260,41 @@ export const api = {
     return request<Application>(`/api/applications/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(body),
+    })
+  },
+
+  getQueue(): Promise<Queue> {
+    return request<Queue>('/api/queue')
+  },
+
+  triage(body: {
+    job_id: number
+    action: TriageAction
+    reason?: string
+    similar_ids?: number[]
+  }): Promise<void> {
+    return request<void>('/api/triage', { method: 'POST', body: JSON.stringify(body) })
+  },
+
+  undoTriage(jobIds: number[]): Promise<void> {
+    return request<void>('/api/triage/undo', {
+      method: 'POST',
+      body: JSON.stringify({ job_ids: jobIds }),
+    })
+  },
+
+  currentRun(): Promise<CurrentRun> {
+    return request<CurrentRun>('/api/runs/current')
+  },
+
+  getSchedule(): Promise<Schedule> {
+    return request<Schedule>('/api/schedule')
+  },
+
+  setSchedule(enabled: boolean): Promise<Schedule> {
+    return request<Schedule>('/api/schedule', {
+      method: 'PUT',
+      body: JSON.stringify({ enabled }),
     })
   },
 

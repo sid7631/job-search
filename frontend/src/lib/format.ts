@@ -1,4 +1,4 @@
-import type { ApplicationStatus } from '@/lib/api'
+import type { Application, ApplicationStatus } from '@/lib/api'
 
 export type Tier = 'high' | 'mid' | 'low'
 
@@ -69,4 +69,17 @@ export function formatRelative(iso: string | null): string {
   if (hrs < 24) return `${hrs}h ago`
   const days = Math.round(hrs / 24)
   return `${days}d ago`
+}
+
+export const FOLLOW_UP_DAYS = 7
+
+/** Applications sent a while ago that have not moved since — time to chase. */
+export function staleApplications(apps: Application[] | undefined): Application[] {
+  const cutoff = Date.now() - FOLLOW_UP_DAYS * 86_400_000
+  return (apps ?? []).filter(
+    (a) =>
+      a.status === 'APPLIED' &&
+      new Date(a.applied_at ?? a.updated_at).getTime() < cutoff &&
+      new Date(a.updated_at).getTime() < cutoff,
+  )
 }

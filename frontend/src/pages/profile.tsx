@@ -2,6 +2,7 @@ import { FileText, Loader2, Upload, UserRound } from 'lucide-react'
 import { useRef } from 'react'
 import { toast } from 'sonner'
 
+import { SearchPreferences } from '@/components/search-preferences'
 import { EmptyState, ErrorState } from '@/components/states'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -11,7 +12,7 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div>
       <p className="text-[0.7rem] uppercase tracking-[0.18em] text-muted-foreground">{label}</p>
-      <p className="mt-1 text-sm text-foreground">{value || '—'}</p>
+      <div className="mt-1 text-sm text-foreground">{value || '—'}</div>
     </div>
   )
 }
@@ -122,6 +123,8 @@ export function ProfilePage() {
           </p>
         </div>
       )}
+
+      {p && <SearchPreferences />}
     </div>
   )
 }

@@ -1,10 +1,21 @@
-import { CheckCircle2, Loader2, Plug, Save, SlidersHorizontal, Wand2, XCircle } from 'lucide-react'
+import {
+  CalendarClock,
+  CheckCircle2,
+  ChevronDown,
+  History,
+  Loader2,
+  Plug,
+  Save,
+  SlidersHorizontal,
+  XCircle,
+} from 'lucide-react'
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
 
+import { Field } from '@/components/form-field'
 import { ErrorState } from '@/components/states'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
   Select,
@@ -15,7 +26,14 @@ import {
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { AppSettings, AppSettingsUpdate, LLMProviderInfo } from '@/lib/api'
-import { useLLMProviders, useSettings, useTestLLM, useUpdateSettings } from '@/lib/queries'
+import {
+  useLLMProviders,
+  useSchedule,
+  useSetSchedule,
+  useSettings,
+  useTestLLM,
+  useUpdateSettings,
+} from '@/lib/queries'
 
 type FormState = {
   naukri_email: string
@@ -58,43 +76,6 @@ function initialForm(s: AppSettings): FormState {
     llm_model: s.llm_model,
     llm_api_key: '',
   }
-}
-
-function Field({
-  label,
-  value,
-  onChange,
-  type = 'text',
-  placeholder,
-  auto,
-}: {
-  label: string
-  value: string
-  onChange: (v: string) => void
-  type?: string
-  placeholder?: string
-  /** Set when this field is currently being filled from the parsed resume. */
-  auto?: boolean
-}) {
-  return (
-    <div className="space-y-1.5">
-      <div className="flex items-center gap-2">
-        <Label className="text-xs text-muted-foreground">{label}</Label>
-        {auto && (
-          <span className="flex items-center gap-1 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-            <Wand2 className="h-2.5 w-2.5" /> from resume
-          </span>
-        )}
-      </div>
-      <Input
-        type={type}
-        value={value}
-        placeholder={placeholder}
-        onChange={(e) => onChange(e.target.value)}
-        className="bg-background/40"
-      />
-    </div>
-  )
 }
 
 function Section({
@@ -255,23 +236,66 @@ function LLMSection({
   )
 }
 
+function ScheduleCard() {
+  const schedule = useSchedule()
+  const setSchedule = useSetSchedule()
+  const data = schedule.data
+
+  function toggle() {
+    if (!data) return
+    setSchedule.mutate(!data.enabled, {
+      onSuccess: (s) =>
+        toast.success(s.enabled ? 'Daily run turned on' : 'Daily run turned off', {
+          description: s.enabled
+            ? `Runs every day at ${String(s.run_hour).padStart(2, '0')}:00, and catches up after sleep.`
+            : 'Run it yourself from Today whenever you like.',
+        }),
+      onError: (e) =>
+        toast.error('Could not change schedule', { description: (e as Error).message }),
+    })
+  }
+
+  return (
+    <section className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-border bg-card/70 p-5">
+      <div>
+        <h2 className="flex items-center gap-2 font-display text-base">
+          <CalendarClock className="h-4 w-4 text-primary" /> Daily run
+        </h2>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {data
+            ? data.supported
+              ? `Find and score new jobs every day at ${String(data.run_hour).padStart(2, '0')}:00 (${data.timezone}). Starts at login; a missed run catches up when your Mac wakes.`
+              : 'Scheduling from here needs macOS. Use `start-scheduler` on other systems.'
+            : 'Loading…'}
+        </p>
+      </div>
+      <Button
+        variant={data?.enabled ? 'outline' : 'default'}
+        size="sm"
+        onClick={toggle}
+        disabled={!data?.supported || setSchedule.isPending}
+      >
+        {setSchedule.isPending && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
+        {data?.enabled ? 'On — turn off' : 'Turn on'}
+      </Button>
+    </section>
+  )
+}
+
 function SettingsForm({ current }: { current: AppSettings }) {
   const save = useUpdateSettings()
   const [form, setForm] = useState<FormState>(() => initialForm(current))
+  const [advanced, setAdvanced] = useState(false)
 
   function set<K extends keyof FormState>(key: K, value: string) {
     setForm((f) => ({ ...f, [key]: value }))
   }
 
   function onSave() {
+    // Search terms live on the Profile page; this form only owns its own fields.
     const body: AppSettingsUpdate = {
       naukri_email: form.naukri_email,
-      naukri_keywords: form.naukri_keywords,
-      naukri_location: form.naukri_location,
-      naukri_experience: form.naukri_experience,
       linkedin_email: form.linkedin_email,
-      linkedin_keywords: form.linkedin_keywords,
-      linkedin_location: form.linkedin_location,
       telegram_min_score: Number(form.telegram_min_score) || 0,
       telegram_top_n: Number(form.telegram_top_n) || 0,
       llm_provider: form.llm_provider,
@@ -297,7 +321,11 @@ function SettingsForm({ current }: { current: AppSettings }) {
           </p>
           <h1 className="mt-1 font-display text-3xl tracking-tight">Settings</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Search terms and accounts. Changes apply to the next run — no restart needed.
+            Schedule, AI and accounts. What to search for lives on your{' '}
+            <Link to="/profile" className="text-primary underline underline-offset-2">
+              Profile
+            </Link>
+            .
           </p>
         </div>
         <Button onClick={onSave} disabled={save.isPending}>
@@ -314,34 +342,35 @@ function SettingsForm({ current }: { current: AppSettings }) {
       </header>
 
       <div className="space-y-5">
+        <ScheduleCard />
+
+        <LLMSection current={current} form={form} set={set} />
+
         <Section
-          title="Naukri"
-          hint="Leave a field blank to use the value from your resume; type anything here to override it."
+          title="Job site accounts"
+          hint="Naukri works without signing in. LinkedIn needs an account; the first sign-in may ask you to approve it on your phone."
         >
           <Field
-            label="Keywords"
-            value={form.naukri_keywords}
-            onChange={(v) => set('naukri_keywords', v)}
-            placeholder={current.derived_from_resume['naukri_keywords'] ?? ''}
-            auto={current.auto_fields.includes('naukri_keywords')}
+            label="LinkedIn email"
+            value={form.linkedin_email}
+            onChange={(v) => set('linkedin_email', v)}
           />
           <Field
-            label="Location"
-            value={form.naukri_location}
-            onChange={(v) => set('naukri_location', v)}
-            placeholder={current.derived_from_resume['naukri_location'] ?? ''}
-            auto={current.auto_fields.includes('naukri_location')}
+            label="LinkedIn password"
+            type="password"
+            value={form.linkedin_password}
+            onChange={(v) => set('linkedin_password', v)}
+            placeholder={
+              current.linkedin_password_set ? '•••••••• (set — leave blank to keep)' : 'not set'
+            }
           />
           <Field
-            label="Experience (years)"
-            value={form.naukri_experience}
-            onChange={(v) => set('naukri_experience', v)}
-            placeholder={current.derived_from_resume['naukri_experience'] ?? ''}
-            auto={current.auto_fields.includes('naukri_experience')}
+            label="Naukri email (optional)"
+            value={form.naukri_email}
+            onChange={(v) => set('naukri_email', v)}
           />
-          <Field label="Email" value={form.naukri_email} onChange={(v) => set('naukri_email', v)} />
           <Field
-            label="Password"
+            label="Naukri password (optional)"
             type="password"
             value={form.naukri_password}
             onChange={(v) => set('naukri_password', v)}
@@ -351,56 +380,49 @@ function SettingsForm({ current }: { current: AppSettings }) {
           />
         </Section>
 
-        <Section
-          title="LinkedIn"
-          hint="Leave a field blank to use the value from your resume; type anything here to override it."
-        >
-          <Field
-            label="Keywords"
-            value={form.linkedin_keywords}
-            onChange={(v) => set('linkedin_keywords', v)}
-            placeholder={current.derived_from_resume['linkedin_keywords'] ?? ''}
-            auto={current.auto_fields.includes('linkedin_keywords')}
-          />
-          <Field
-            label="Location"
-            value={form.linkedin_location}
-            onChange={(v) => set('linkedin_location', v)}
-            placeholder={current.derived_from_resume['linkedin_location'] ?? ''}
-            auto={current.auto_fields.includes('linkedin_location')}
-          />
-          <Field
-            label="Email"
-            value={form.linkedin_email}
-            onChange={(v) => set('linkedin_email', v)}
-          />
-          <Field
-            label="Password"
-            type="password"
-            value={form.linkedin_password}
-            onChange={(v) => set('linkedin_password', v)}
-            placeholder={
-              current.linkedin_password_set ? '•••••••• (set — leave blank to keep)' : 'not set'
-            }
-          />
-        </Section>
-
-        <Section title="Telegram digest">
-          <Field
-            label="Top picks to push"
-            type="number"
-            value={form.telegram_top_n}
-            onChange={(v) => set('telegram_top_n', v)}
-          />
-          <Field
-            label="Min score counted as high-quality"
-            type="number"
-            value={form.telegram_min_score}
-            onChange={(v) => set('telegram_min_score', v)}
-          />
-        </Section>
-
-        <LLMSection current={current} form={form} set={set} />
+        <section className="rounded-xl border border-border bg-card/40">
+          <button
+            type="button"
+            onClick={() => setAdvanced((a) => !a)}
+            className="flex w-full items-center justify-between px-5 py-4 text-left"
+          >
+            <span className="font-display text-base">Advanced</span>
+            <ChevronDown
+              className={`h-4 w-4 text-muted-foreground transition-transform ${advanced ? 'rotate-180' : ''}`}
+            />
+          </button>
+          {advanced && (
+            <div className="space-y-5 border-t border-border/60 p-5">
+              <div>
+                <h3 className="text-sm font-medium">Telegram digest</h3>
+                <p className="mb-3 mt-1 text-xs text-muted-foreground">
+                  Optional daily push. The bot token and chat id are set in{' '}
+                  <code>backend/.env</code>.
+                </p>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field
+                    label="Jobs per digest"
+                    type="number"
+                    value={form.telegram_top_n}
+                    onChange={(v) => set('telegram_top_n', v)}
+                  />
+                  <Field
+                    label="Only include scores at or above"
+                    type="number"
+                    value={form.telegram_min_score}
+                    onChange={(v) => set('telegram_min_score', v)}
+                  />
+                </div>
+              </div>
+              <Link
+                to="/runs"
+                className="flex items-center gap-2 text-sm text-primary underline-offset-2 hover:underline"
+              >
+                <History className="h-4 w-4" /> Run history and diagnostics
+              </Link>
+            </div>
+          )}
+        </section>
 
         <p className="text-xs text-muted-foreground">
           Stored locally in your database (overrides <code>.env</code>). The API has no auth — keep

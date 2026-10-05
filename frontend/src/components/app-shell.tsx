@@ -1,49 +1,51 @@
 import {
-  LayoutGrid,
+  BellRing,
+  KanbanSquare,
   Loader2,
   Play,
-  Radar,
-  KanbanSquare,
   SlidersHorizontal,
+  Sun,
   UserRound,
 } from 'lucide-react'
 import type { ReactNode } from 'react'
-import { NavLink } from 'react-router-dom'
-import { toast } from 'sonner'
+import { Link, NavLink } from 'react-router-dom'
 
 import { Button } from '@/components/ui/button'
-import { useRunNow } from '@/lib/queries'
+import { useCurrentRun } from '@/lib/queries'
+import { useStartRun } from '@/lib/use-start-run'
 import { cn } from '@/lib/utils'
 
 const NAV = [
-  { to: '/', label: 'Matches', icon: LayoutGrid, end: true },
-  { to: '/pipeline', label: 'Pipeline', icon: KanbanSquare, end: false },
-  { to: '/runs', label: 'Runs', icon: Radar, end: false },
+  { to: '/', label: 'Today', icon: Sun, end: true },
+  { to: '/applications', label: 'Applications', icon: KanbanSquare, end: false },
   { to: '/profile', label: 'Profile', icon: UserRound, end: false },
   { to: '/settings', label: 'Settings', icon: SlidersHorizontal, end: false },
 ]
 
+/** Starts a run, or — while one is going — shows it is running and links to Today. */
 function RunButton() {
-  const runNow = useRunNow()
+  const { start, pending } = useStartRun()
+  const current = useCurrentRun()
+  const active = current.data?.active
+
+  if (active) {
+    const attention = Boolean(active.progress.attention)
+    return (
+      <Button size="sm" variant="outline" asChild>
+        <Link to="/" className={cn(attention && 'border-amber-500/60 text-amber-300')}>
+          {attention ? (
+            <BellRing className="h-4 w-4 animate-pulse" />
+          ) : (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          )}
+          <span className="ml-1.5 hidden sm:inline">{attention ? 'Needs you' : 'Running'}</span>
+        </Link>
+      </Button>
+    )
+  }
   return (
-    <Button
-      size="sm"
-      onClick={() =>
-        runNow.mutate(undefined, {
-          onSuccess: (res) =>
-            toast.success(`Run #${res.run_id} started`, {
-              description: 'Scraping headed — a browser window will open.',
-            }),
-          onError: (e) => toast.error('Could not start run', { description: (e as Error).message }),
-        })
-      }
-      disabled={runNow.isPending}
-    >
-      {runNow.isPending ? (
-        <Loader2 className="h-4 w-4 animate-spin" />
-      ) : (
-        <Play className="h-4 w-4" />
-      )}
+    <Button size="sm" onClick={start} disabled={pending}>
+      {pending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
       <span className="ml-1.5 hidden sm:inline">Run</span>
     </Button>
   )
