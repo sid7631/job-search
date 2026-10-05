@@ -55,6 +55,27 @@ function Counts({ counts }: { counts: Record<string, unknown> }) {
       {String(counts[k])} {label}
     </span>
   ))
+  const gate = counts.semantic_filter as
+    | {
+        dropped: number
+        errors: number
+        dropped_jobs: { title: string; company: string; fit: number }[]
+      }
+    | undefined
+  if (gate) {
+    const detail = gate.dropped_jobs.length
+      ? gate.dropped_jobs.map((d) => `${d.title} @ ${d.company} (fit ${d.fit})`).join('\n')
+      : 'Nothing dropped'
+    chips.push(
+      <span
+        key="semantic_filter"
+        title={gate.errors ? `${detail}\n${gate.errors} call(s) failed — kept` : detail}
+        className="tabnum cursor-help rounded-md bg-muted px-1.5 py-0.5 text-[0.7rem] text-muted-foreground"
+      >
+        {gate.dropped} gated{gate.errors ? ` · ${gate.errors} err` : ''}
+      </span>,
+    )
+  }
   if (chips.length === 0) return <span className="text-xs text-muted-foreground/60">—</span>
   return <div className="flex flex-wrap gap-1">{chips}</div>
 }
